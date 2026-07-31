@@ -15,7 +15,9 @@
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
     "openaiModel": "gpt-4o-transcribe",
-    "groqModel": "whisper-large-v3-turbo"
+    "groqModel": "whisper-large-v3-turbo",
+    "azureRegion": "",
+    "azureLocale": "en-US"
   },
   "cleanup": {
     "provider": "basic",

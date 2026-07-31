@@ -390,13 +390,24 @@ public partial class App : System.Windows.Application
             return CreateLocalTranscriber(settings.Transcription);
         }
 
-        var provider = CloudProviderDefinition.Create(providerName, secrets);
-        ITranscriber cloud = new OpenAiCompatibleTranscriber(
-            provider,
-            providerName == "openai"
-                ? settings.Transcription.OpenaiModel
-                : settings.Transcription.GroqModel,
-            settings.Transcription.Language);
+        ITranscriber cloud;
+        if (providerName == "azure")
+        {
+            cloud = new AzureSpeechTranscriber(
+                secrets.Get("AZURE_SPEECH_KEY"),
+                settings.Transcription.AzureRegion,
+                settings.Transcription.AzureLocale);
+        }
+        else
+        {
+            var provider = CloudProviderDefinition.Create(providerName, secrets);
+            cloud = new OpenAiCompatibleTranscriber(
+                provider,
+                providerName == "openai"
+                    ? settings.Transcription.OpenaiModel
+                    : settings.Transcription.GroqModel,
+                settings.Transcription.Language);
+        }
 
         if (!settings.Transcription.FallbackToLocal)
         {

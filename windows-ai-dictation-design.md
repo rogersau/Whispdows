@@ -284,14 +284,15 @@ Do not build a model picker UI. The model is selected by path in `settings.json`
 
 ### 8.4 Cloud transcription
 
-Implement one `OpenAiCompatibleTranscriber` with provider-specific base URL, API key, and model name.
+Implement one `OpenAiCompatibleTranscriber` with provider-specific base URL, API key, and model name, plus an `AzureSpeechTranscriber` for Azure's Fast Transcription REST API.
 
 Providers:
 
 - `openai`
 - `groq`
+- `azure`
 
-Both receive the completed WAV recording through a multipart `POST` to their transcription endpoint. Keep model names configurable because providers change their recommended models over time.
+All receive the completed WAV recording through a multipart `POST` to their transcription endpoint. Keep OpenAI-compatible model names configurable because providers change their recommended models over time. Azure uses its region-scoped Speech resource key, region identifier, and locale.
 
 Suggested initial values as of July 2026:
 
@@ -455,7 +456,9 @@ The installer creates example configuration files only when they do not already 
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
     "openaiModel": "gpt-4o-transcribe",
-    "groqModel": "whisper-large-v3-turbo"
+    "groqModel": "whisper-large-v3-turbo",
+    "azureRegion": "",
+    "azureLocale": "en-US"
   },
   "cleanup": {
     "provider": "basic",
@@ -474,7 +477,7 @@ The installer creates example configuration files only when they do not already 
 Allowed values:
 
 ```text
-transcription.provider = local | openai | groq
+transcription.provider = local | openai | groq | azure
 cleanup.provider       = basic | openai | groq | none
 cleanup.style          = auto | sentence | fragment
 ```
@@ -486,6 +489,7 @@ cleanup.style          = auto | sentence | fragment
 ```dotenv
 OPENAI_API_KEY=
 GROQ_API_KEY=
+AZURE_SPEECH_KEY=
 ```
 
 The `.env` file is intentionally simple and is not committed to source control. It is plain text, readable by the Windows user account. Do not add DPAPI or a credential vault unless this becomes a multi-user or distributed product.
@@ -673,7 +677,7 @@ Version 1 is complete when all of the following work:
 3. Holding the configured shortcut starts microphone capture and shows the pill without stealing focus.
 4. Releasing it stops capture and runs local whisper.cpp transcription.
 5. Local/basic mode works with the network disconnected.
-6. OpenAI and Groq transcription can each be selected in `settings.json` and read their key from `.env`.
+6. OpenAI, Groq, and Azure Speech transcription can each be selected in `settings.json` and read their key from `.env`.
 7. OpenAI or Groq LLM cleanup can be selected independently.
 8. LLM cleanup failure falls back to basic cleanup.
 9. Text pastes correctly into at least Notepad, Edge/Chrome, Outlook, Teams, and VS Code when those applications are not elevated.
@@ -712,7 +716,7 @@ At this point the application is already useful and fully offline.
 
 ### Slice 4 — cloud options
 
-- OpenAI-compatible transcription client
+- OpenAI-compatible and Azure Speech transcription clients
 - OpenAI/Groq LLM cleaner
 - `.env` loading
 - Timeouts and fallbacks
@@ -754,3 +758,4 @@ Do not implement these pre-emptively:
 - [Whisper.net](https://github.com/sandrohanea/whisper.net)
 - [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
 - [Groq speech-to-text](https://console.groq.com/docs/speech-to-text)
+- [Azure Speech fast transcription](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create)

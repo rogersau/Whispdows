@@ -28,7 +28,8 @@ public sealed class EnvironmentFileLoader
 {
     private const string DefaultContents =
         "OPENAI_API_KEY=" + "\r\n" +
-        "GROQ_API_KEY=" + "\r\n";
+        "GROQ_API_KEY=" + "\r\n" +
+        "AZURE_SPEECH_KEY=" + "\r\n";
 
     private readonly string _path;
 

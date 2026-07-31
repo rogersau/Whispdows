@@ -88,6 +88,219 @@ public sealed class ProviderClientTests
     }
 
     [Fact]
+    public async Task Azure_transcriber_uses_the_regional_fast_transcription_endpoint()
+    {
+        var handler = new RecordingHandler(
+            _ => JsonResponse(
+                """{"combinedPhrases":[{"text":"  hello from Azure  "}],"phrases":[]}"""));
+        using var client = new HttpClient(handler);
+        using var transcriber = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast",
+            "en-AU",
+            client);
+
+        var result = await transcriber.TranscribeAsync(
+            new MemoryStream(Encoding.ASCII.GetBytes("RIFF-wave")),
+            CancellationToken.None);
+
+        Assert.Equal("hello from Azure", result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(
+            "https://australiaeast.api.cognitive.microsoft.com/speechtotext/transcriptions:transcribe?api-version=2025-10-15",
+            request.Uri.AbsoluteUri);
+        Assert.Null(request.Authorization);
+        Assert.Equal("azure-secret", request.SubscriptionKey);
+        Assert.StartsWith("multipart/form-data", request.ContentType);
+        Assert.Contains("name=audio", request.Body);
+        Assert.Contains("dictation.wav", request.Body);
+        Assert.Contains("name=definition", request.Body);
+        Assert.Contains("en-AU", request.Body);
+        Assert.DoesNotContain("azure-secret", request.Body);
+    }
+
+    [Fact]
+    public async Task Azure_transcriber_does_not_request_without_its_key()
+    {
+        var handler = new RecordingHandler(
+            _ => JsonResponse("""{"combinedPhrases":[]}"""));
+        using var client = new HttpClient(handler);
+        using var transcriber = new AzureSpeechTranscriber(
+            string.Empty,
+            "australiaeast",
+            "en-AU",
+            client);
+
+        var exception = await Assert.ThrowsAsync<MissingApiKeyException>(
+            () => transcriber.TranscribeAsync(
+                new MemoryStream([1, 2, 3]),
+                CancellationToken.None));
+
+        Assert.Equal("AZURE_SPEECH_KEY", exception.ApiKeyName);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Azure_api_failure_uses_local_fallback_without_retrying()
+    {
+        var handler = new RecordingHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        using var client = new HttpClient(handler);
+        using var azure = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast",
+            "en-AU",
+            client);
+        var local = new StubTranscriber("local result");
+        using var transcriber = new FallbackTranscriber(azure, local);
+
+        var result = await transcriber.TranscribeAsync(
+            new MemoryStream([1, 2, 3]),
+            CancellationToken.None);
+
+        Assert.Equal("local result", result);
+        Assert.Single(handler.Requests);
+        Assert.Equal(1, local.CallCount);
+    }
+
+    [Fact]
+    public async Task Azure_missing_key_uses_explicit_local_fallback()
+    {
+        var handler = new RecordingHandler(
+            _ => JsonResponse("""{"combinedPhrases":[]}"""));
+        using var client = new HttpClient(handler);
+        using var azure = new AzureSpeechTranscriber(
+            string.Empty,
+            "australiaeast",
+            "en-AU",
+            client);
+        var local = new StubTranscriber("local result");
+        using var transcriber = new FallbackTranscriber(azure, local);
+
+        transcriber.ValidateConfiguration();
+        var result = await transcriber.TranscribeAsync(
+            new MemoryStream([1, 2, 3]),
+            CancellationToken.None);
+
+        Assert.Equal("local result", result);
+        Assert.Empty(handler.Requests);
+        Assert.Equal(1, local.CallCount);
+    }
+
+    [Fact]
+    public async Task Azure_timeout_is_a_cloud_failure()
+    {
+        var handler = new RecordingHandler(async cancellationToken =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return JsonResponse("""{"combinedPhrases":[]}""");
+        });
+        using var client = new HttpClient(handler);
+        using var transcriber = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast",
+            "en-AU",
+            client,
+            TimeSpan.FromMilliseconds(25));
+
+        var exception = await Assert.ThrowsAsync<CloudRequestException>(
+            () => transcriber.TranscribeAsync(
+                new MemoryStream([1, 2, 3]),
+                CancellationToken.None));
+
+        Assert.Equal("Azure Speech", exception.Provider);
+        Assert.Contains("timed out", exception.Message);
+    }
+
+    [Fact]
+    public async Task Azure_user_cancellation_does_not_use_local_fallback()
+    {
+        var handler = new RecordingHandler(async cancellationToken =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return JsonResponse("""{"combinedPhrases":[]}""");
+        });
+        using var client = new HttpClient(handler);
+        using var azure = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast",
+            "en-AU",
+            client);
+        var local = new StubTranscriber("local result");
+        using var transcriber = new FallbackTranscriber(azure, local);
+        using var cancellation = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(25));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => transcriber.TranscribeAsync(
+                new MemoryStream([1, 2, 3]),
+                cancellation.Token));
+
+        Assert.Equal(0, local.CallCount);
+    }
+
+    [Fact]
+    public async Task Azure_malformed_response_is_a_cloud_failure()
+    {
+        var handler = new RecordingHandler(
+            _ => JsonResponse("""{"text":"wrong response shape"}"""));
+        using var client = new HttpClient(handler);
+        using var transcriber = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast",
+            "en-AU",
+            client);
+
+        var exception = await Assert.ThrowsAsync<CloudRequestException>(
+            () => transcriber.TranscribeAsync(
+                new MemoryStream([1, 2, 3]),
+                CancellationToken.None));
+
+        Assert.Contains("malformed", exception.Message);
+    }
+
+    [Fact]
+    public void Azure_key_rejects_header_control_characters()
+    {
+        using var transcriber = new AzureSpeechTranscriber(
+            "azure-secret\r\nInjected: value",
+            "australiaeast",
+            "en-AU");
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            transcriber.ValidateConfiguration);
+
+        Assert.DoesNotContain("azure-secret", exception.Message);
+    }
+
+    [Fact]
+    public void Azure_transcriber_rejects_use_after_disposal()
+    {
+        var transcriber = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast",
+            "en-AU");
+        transcriber.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(
+            transcriber.ValidateConfiguration);
+    }
+
+    [Fact]
+    public void Azure_endpoint_rejects_non_region_host_input()
+    {
+        using var transcriber = new AzureSpeechTranscriber(
+            "azure-secret",
+            "australiaeast.example.com/path",
+            "en-AU");
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            transcriber.ValidateConfiguration);
+
+        Assert.Contains("Azure region identifier", exception.Message);
+    }
+
+    [Fact]
     public async Task Transcriber_missing_key_uses_explicit_local_fallback()
     {
         var handler = new RecordingHandler(_ => JsonResponse("""{"text":"unused"}"""));
@@ -354,6 +567,11 @@ public sealed class ProviderClientTests
             var snapshot = new RequestSnapshot(
                 request.RequestUri!,
                 request.Headers.Authorization,
+                request.Headers.TryGetValues(
+                    "Ocp-Apim-Subscription-Key",
+                    out var subscriptionKeys)
+                    ? subscriptionKeys.Single()
+                    : null,
                 request.Content?.Headers.ContentType?.ToString() ?? string.Empty,
                 request.Content is null
                     ? string.Empty
@@ -367,6 +585,7 @@ public sealed class ProviderClientTests
     private sealed record RequestSnapshot(
         Uri Uri,
         AuthenticationHeaderValue? Authorization,
+        string? SubscriptionKey,
         string ContentType,
         string Body);
 

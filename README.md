@@ -2,7 +2,7 @@
 
 Dictate is a small Windows tray application for hold-to-talk AI dictation. All five implementation slices are present: the Windows tray shell, global hold shortcut, WASAPI microphone capture, local or cloud transcription, deterministic or cloud cleanup, focus-safe clipboard paste, rolling privacy-safe logs, and a per-user installer.
 
-The local path works without network access once the model is present. OpenAI and Groq are optional and are never selected automatically.
+The local path works without network access once the model is present. OpenAI, Groq, and Azure Speech are optional and are never selected automatically.
 
 ## Build and run
 
@@ -51,9 +51,24 @@ Set only the keys for providers you select:
 ```dotenv
 OPENAI_API_KEY=
 GROQ_API_KEY=
+AZURE_SPEECH_KEY=
 ```
 
-Select `openai` or `groq` under `transcription.provider` for cloud transcription. OpenAI defaults to `gpt-4o-transcribe`; Groq defaults to `whisper-large-v3-turbo`. A missing key is reported before recording unless `fallbackToLocal` is enabled, in which case Dictate skips the cloud request and uses the validated local model. Failed and timed-out requests are not retried.
+Select `openai`, `groq`, or `azure` under `transcription.provider` for cloud transcription. OpenAI defaults to `gpt-4o-transcribe`; Groq defaults to `whisper-large-v3-turbo`.
+
+Azure uses the [Speech Fast Transcription REST API](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create). Set `AZURE_SPEECH_KEY` to a Speech resource key, then set `transcription.azureRegion` to the matching [region identifier](https://learn.microsoft.com/azure/ai-services/speech-service/regions) and `transcription.azureLocale` to the expected speech locale. For an Australian resource:
+
+```json
+{
+  "transcription": {
+    "provider": "azure",
+    "azureRegion": "australiaeast",
+    "azureLocale": "en-AU"
+  }
+}
+```
+
+Azure keys are region-scoped, so the configured region must match the Speech resource. A missing key is reported before recording unless `fallbackToLocal` is enabled, in which case Dictate skips the cloud request and uses the validated local model. Failed and timed-out requests are not retried.
 
 Cloud cleanup is independent of transcription. Select `openai` or `groq` under `cleanup.provider` and set `cleanup.model` to a chat-completions model available to that provider account. When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malformed response falls back to deterministic basic cleanup so a successful transcript is not discarded.
 
@@ -106,7 +121,7 @@ An unsigned personal installer may trigger Microsoft Defender SmartScreen. Build
 
 ## Privacy
 
-Audio capture and transcripts stay in memory and are explicitly released after processing or cancellation. With `transcription.provider` set to `local` and `cleanup.provider` set to `basic` or `none`, no audio or transcript is sent over the network. Cloud transcription sends the completed WAV recording to the selected provider. Cloud cleanup sends only the raw transcript and fixed cleanup instructions to the selected provider; it does not send surrounding app or clipboard context.
+Audio capture and transcripts stay in memory and are explicitly released after processing or cancellation. With `transcription.provider` set to `local` and `cleanup.provider` set to `basic` or `none`, no audio or transcript is sent over the network. Cloud transcription sends the completed WAV recording to the selected provider, including Azure Speech when selected. Cloud cleanup sends only the raw transcript and fixed cleanup instructions to the selected provider; it does not send surrounding app or clipboard context.
 
 API keys remain in the user-owned plain-text `.env` file. Dictate has no remote logging, analytics, telemetry, crash reporting, or transcript history.
 

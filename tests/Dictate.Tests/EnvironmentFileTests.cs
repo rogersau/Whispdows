@@ -15,6 +15,7 @@ public sealed class EnvironmentFileTests
         Assert.True(File.Exists(sandbox.Path));
         Assert.Equal(string.Empty, secrets.Get("OPENAI_API_KEY"));
         Assert.Equal(string.Empty, secrets.Get("GROQ_API_KEY"));
+        Assert.Equal(string.Empty, secrets.Get("AZURE_SPEECH_KEY"));
     }
 
     [Fact]
@@ -24,12 +25,13 @@ public sealed class EnvironmentFileTests
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(sandbox.Path)!);
         File.WriteAllText(
             sandbox.Path,
-            "OPENAI_API_KEY='openai-key'\nGROQ_API_KEY=groq=key\n");
+            "OPENAI_API_KEY='openai-key'\nGROQ_API_KEY=groq=key\nAZURE_SPEECH_KEY=azure-key\n");
 
         var secrets = sandbox.Loader.LoadOrCreate();
 
         Assert.Equal("openai-key", secrets.Get("OPENAI_API_KEY"));
         Assert.Equal("groq=key", secrets.Get("GROQ_API_KEY"));
+        Assert.Equal("azure-key", secrets.Get("AZURE_SPEECH_KEY"));
         Assert.Contains("groq=key", File.ReadAllText(sandbox.Path));
     }
 

@@ -86,6 +86,10 @@ public sealed class TranscriptionSettings
     public string OpenaiModel { get; set; } = "gpt-4o-transcribe";
 
     public string GroqModel { get; set; } = "whisper-large-v3-turbo";
+
+    public string AzureRegion { get; set; } = string.Empty;
+
+    public string AzureLocale { get; set; } = "en-US";
 }
 
 public sealed class CleanupSettings
@@ -185,7 +189,7 @@ public static class SettingsValidator
 {
     private static readonly HashSet<string> TranscriptionProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "local", "openai", "groq"
+        "local", "openai", "groq", "azure"
     };
 
     private static readonly HashSet<string> CleanupProviders = new(StringComparer.OrdinalIgnoreCase)
@@ -266,6 +270,21 @@ public static class SettingsValidator
                 && string.IsNullOrWhiteSpace(settings.Transcription.GroqModel))
             {
                 errors.Add("transcription.groqModel must not be empty when using Groq.");
+            }
+
+            if (string.Equals(settings.Transcription.Provider, "azure", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!AzureSpeechConfiguration.IsValidRegion(
+                    settings.Transcription.AzureRegion))
+                {
+                    errors.Add("transcription.azureRegion must be an Azure region identifier such as australiaeast.");
+                }
+
+                if (!AzureSpeechConfiguration.IsValidLocale(
+                    settings.Transcription.AzureLocale))
+                {
+                    errors.Add("transcription.azureLocale must be a locale such as en-AU.");
+                }
             }
         }
 

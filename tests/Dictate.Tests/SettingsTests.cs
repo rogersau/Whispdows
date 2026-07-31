@@ -16,6 +16,7 @@ public sealed class SettingsTests
         Assert.Equal(90, settings.Audio.MaxSeconds);
         Assert.Equal("local", settings.Transcription.Provider);
         Assert.Equal("gpt-4o-transcribe", settings.Transcription.OpenaiModel);
+        Assert.Equal("en-US", settings.Transcription.AzureLocale);
         Assert.Equal("basic", settings.Cleanup.Provider);
         Assert.True(File.Exists(sandbox.Paths.SettingsFile));
 
@@ -73,6 +74,34 @@ public sealed class SettingsTests
             () => sandbox.Loader.Save(settings));
 
         Assert.Contains("cleanup.model", exception.Message);
+    }
+
+    [Fact]
+    public void Save_requires_a_region_and_locale_for_azure_speech()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Transcription.Provider = "azure";
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("transcription.azureRegion", exception.Message);
+
+        settings.Transcription.AzureRegion = "australiaeast";
+        settings.Transcription.AzureLocale = string.Empty;
+        exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("transcription.azureLocale", exception.Message);
+
+        settings.Transcription.AzureRegion = "australiaeast.example.com/path";
+        settings.Transcription.AzureLocale = "en/AU";
+        exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("transcription.azureRegion", exception.Message);
+        Assert.Contains("transcription.azureLocale", exception.Message);
     }
 
     [Fact]

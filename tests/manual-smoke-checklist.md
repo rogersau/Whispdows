@@ -30,6 +30,7 @@ Confirm the sentence is pasted once and the original clipboard text is restored.
 - Deny microphone access. Confirm `Microphone unavailable` and no paste.
 - Disconnect networking in local/basic mode. Confirm dictation still completes.
 - Configure a cloud provider with an invalid key and a local/basic fallback. Confirm one failed cloud request is followed by fallback, with no repeated request.
+- Configure Azure Speech with the resource's matching region and locale. Confirm one dictation is transcribed, then use a deliberately invalid key and confirm local fallback runs without retrying.
 
 ## Privacy inspection
 
