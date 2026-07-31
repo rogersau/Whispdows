@@ -15,6 +15,7 @@ public sealed class SettingsTests
         Assert.Equal("RightCtrl", settings.Hotkey.Shortcut);
         Assert.Equal(90, settings.Audio.MaxSeconds);
         Assert.Equal("local", settings.Transcription.Provider);
+        Assert.Equal("gpt-4o-transcribe", settings.Transcription.OpenaiModel);
         Assert.Equal("basic", settings.Cleanup.Provider);
         Assert.True(File.Exists(sandbox.Paths.SettingsFile));
 
@@ -59,6 +60,19 @@ public sealed class SettingsTests
         var exception = Assert.Throws<SettingsValidationException>(() => sandbox.Loader.Save(settings));
 
         Assert.Contains("empty key", exception.Message);
+    }
+
+    [Fact]
+    public void Save_requires_a_model_for_cloud_cleanup()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Cleanup.Provider = "openai";
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("cleanup.model", exception.Message);
     }
 
     [Fact]

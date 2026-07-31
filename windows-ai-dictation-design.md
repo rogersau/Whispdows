@@ -295,7 +295,7 @@ Both receive the completed WAV recording through a multipart `POST` to their tra
 
 Suggested initial values as of July 2026:
 
-- OpenAI: `gpt-transcribe`
+- OpenAI: `gpt-4o-transcribe`
 - Groq: `whisper-large-v3-turbo`
 
 No provider is selected automatically. The `transcription.provider` setting is authoritative.
@@ -454,7 +454,7 @@ The installer creates example configuration files only when they do not already 
     "fallbackToLocal": true,
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
-    "openaiModel": "gpt-transcribe",
+    "openaiModel": "gpt-4o-transcribe",
     "groqModel": "whisper-large-v3-turbo"
   },
   "cleanup": {

@@ -4,10 +4,8 @@ using Whisper.net;
 
 namespace Dictate;
 
-public interface ITranscriber : IDisposable
+public interface ITranscriber : IConfigurationValidator, IDisposable
 {
-    void ValidateConfiguration();
-
     Task<string> TranscribeAsync(
         Stream wavAudio,
         CancellationToken cancellationToken);
@@ -32,6 +30,15 @@ public sealed class DictationPipeline : IDisposable
     public ITextCleaner TextCleaner { get; }
 
     public ITextInserter TextInserter { get; }
+
+    public void ValidateConfiguration()
+    {
+        Transcriber.ValidateConfiguration();
+        if (TextCleaner is IConfigurationValidator validator)
+        {
+            validator.ValidateConfiguration();
+        }
+    }
 
     public void Dispose()
     {

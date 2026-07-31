@@ -14,7 +14,7 @@
     "fallbackToLocal": true,
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
-    "openaiModel": "gpt-transcribe",
+    "openaiModel": "gpt-4o-transcribe",
     "groqModel": "whisper-large-v3-turbo"
   },
   "cleanup": {

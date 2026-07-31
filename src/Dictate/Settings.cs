@@ -80,7 +80,7 @@ public sealed class TranscriptionSettings
 
     public int LocalThreads { get; set; }
 
-    public string OpenaiModel { get; set; } = "gpt-transcribe";
+    public string OpenaiModel { get; set; } = "gpt-4o-transcribe";
 
     public string GroqModel { get; set; } = "whisper-large-v3-turbo";
 }
@@ -252,6 +252,18 @@ public static class SettingsValidator
             {
                 errors.Add("transcription.localModelPath must not be empty.");
             }
+
+            if (string.Equals(settings.Transcription.Provider, "openai", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(settings.Transcription.OpenaiModel))
+            {
+                errors.Add("transcription.openaiModel must not be empty when using OpenAI.");
+            }
+
+            if (string.Equals(settings.Transcription.Provider, "groq", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(settings.Transcription.GroqModel))
+            {
+                errors.Add("transcription.groqModel must not be empty when using Groq.");
+            }
         }
 
         if (settings.Cleanup is null)
@@ -262,6 +274,12 @@ public static class SettingsValidator
         {
             AddAllowedValueError(errors, "cleanup.provider", settings.Cleanup.Provider, CleanupProviders);
             AddAllowedValueError(errors, "cleanup.style", settings.Cleanup.Style, CleanupStyles);
+            if ((string.Equals(settings.Cleanup.Provider, "openai", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(settings.Cleanup.Provider, "groq", StringComparison.OrdinalIgnoreCase))
+                && string.IsNullOrWhiteSpace(settings.Cleanup.Model))
+            {
+                errors.Add("cleanup.model must not be empty when using a cloud cleanup provider.");
+            }
         }
 
         if (settings.Paste is null)

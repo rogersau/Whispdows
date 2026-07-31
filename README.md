@@ -1,8 +1,8 @@
 # Dictate
 
-Dictate is a small Windows tray application for hold-to-talk AI dictation. The repository currently contains Slices 1 through 3: the Windows tray shell, global hold shortcut, WASAPI microphone capture, persistent local whisper.cpp transcription, deterministic cleanup, and focus-safe clipboard paste.
+Dictate is a small Windows tray application for hold-to-talk AI dictation. The repository currently contains Slices 1 through 4: the Windows tray shell, global hold shortcut, WASAPI microphone capture, local or cloud transcription, deterministic or cloud cleanup, and focus-safe clipboard paste.
 
-Cloud transcription and LLM cleanup are intentionally deferred to Slice 4. The local path works without network access once the model is present.
+The local path works without network access once the model is present. OpenAI and Groq are optional and are never selected automatically.
 
 ## Build and run
 
@@ -32,6 +32,23 @@ The application creates this file on first start:
 
 The checked-in [settings.example.json](settings.example.json) shows the complete configuration shape. Settings are validated before they are loaded or saved; an invalid reload leaves the last valid in-memory settings active.
 
+The application also creates a plain-text secrets file:
+
+```text
+%LOCALAPPDATA%\Dictate\.env
+```
+
+Set only the keys for providers you select:
+
+```dotenv
+OPENAI_API_KEY=
+GROQ_API_KEY=
+```
+
+Select `openai` or `groq` under `transcription.provider` for cloud transcription. OpenAI defaults to `gpt-4o-transcribe`; Groq defaults to `whisper-large-v3-turbo`. A missing key is reported before recording unless `fallbackToLocal` is enabled, in which case Dictate skips the cloud request and uses the validated local model. Failed and timed-out requests are not retried.
+
+Cloud cleanup is independent of transcription. Select `openai` or `groq` under `cleanup.provider` and set `cleanup.model` to a chat-completions model available to that provider account. When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malformed response falls back to deterministic basic cleanup so a successful transcript is not discarded.
+
 Supported shortcut examples include:
 
 ```text
@@ -54,4 +71,6 @@ Dictate will remain a non-elevated application. Windows does not allow a normal 
 
 ## Privacy
 
-Audio capture and transcripts stay in memory and are explicitly released after processing or cancellation. With `transcription.provider` set to `local` and `cleanup.provider` set to `basic` or `none`, no audio or transcript is sent over the network. Cloud transcription or cleanup, when configured in Slice 4, will send the relevant audio or transcript to the selected provider. No telemetry or transcript history is planned.
+Audio capture and transcripts stay in memory and are explicitly released after processing or cancellation. With `transcription.provider` set to `local` and `cleanup.provider` set to `basic` or `none`, no audio or transcript is sent over the network. Cloud transcription sends the completed WAV recording to the selected provider. Cloud cleanup sends only the raw transcript and fixed cleanup instructions to the selected provider; it does not send surrounding app or clipboard context.
+
+API keys remain in the user-owned plain-text `.env` file. Dictate has no remote logging, analytics, telemetry, or transcript history.

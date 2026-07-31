@@ -123,7 +123,7 @@ public sealed class DictationController : IDisposable
     public void ValidateConfiguration()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _pipeline.Transcriber.ValidateConfiguration();
+        _pipeline.ValidateConfiguration();
     }
 
     public async Task HandleHotkeyEventAsync(HotkeyEvent hotkeyEvent)
@@ -286,6 +286,7 @@ public sealed class DictationController : IDisposable
                 AudioRecorderException => "Microphone unavailable",
                 LocalModelNotFoundException => "Model missing",
                 _ when State == DictationState.Pasting => "Paste failed",
+                _ when State == DictationState.Cleaning => "Cleanup failed",
                 _ => "Transcription failed"
             };
             EnterErrorLocked(shortMessage, sessionIdentifier, exception.Message);

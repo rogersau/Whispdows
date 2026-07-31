@@ -8,8 +8,10 @@ public partial class App : System.Windows.Application
 {
     private readonly SettingsPaths _paths = SettingsPaths.CreateDefault();
     private readonly SettingsLoader _settingsLoader;
+    private readonly EnvironmentFileLoader _environmentFileLoader;
     private readonly StartupRegistration _startupRegistration;
     private AppSettings _settings = AppSettings.CreateDefault();
+    private ProviderSecrets _secrets = ProviderSecrets.Empty;
     private TrayMenu? _trayMenu;
     private PillWindow? _pillWindow;
     private DictationController? _controller;
@@ -18,6 +20,7 @@ public partial class App : System.Windows.Application
     public App()
     {
         _settingsLoader = new SettingsLoader(_paths);
+        _environmentFileLoader = new EnvironmentFileLoader(_paths.EnvironmentFile);
         _startupRegistration = new StartupRegistration("Dictate");
     }
 
@@ -29,6 +32,7 @@ public partial class App : System.Windows.Application
         try
         {
             _settings = _settingsLoader.LoadOrCreate();
+            _secrets = _environmentFileLoader.LoadOrCreate();
             ReconcileLaunchAtLogin();
 
             _pillWindow = new PillWindow();
@@ -37,7 +41,7 @@ public partial class App : System.Windows.Application
                 _pillWindow,
                 NativeWindow.GetForegroundWindow,
                 _settings.Audio,
-                CreatePipeline(_settings));
+                CreatePipeline(_settings, _secrets));
             _controller.StateChanged += ControllerOnStateChanged;
             _controller.ErrorOccurred += ControllerOnError;
 
@@ -177,6 +181,7 @@ public partial class App : System.Windows.Application
         }
 
         var previousSettings = _settings;
+        var previousSecrets = _secrets;
         var previousRegistration = _startupRegistration.IsEnabled;
         DictationPipeline? candidatePipeline = null;
         var pipelineReplaced = false;
@@ -184,7 +189,8 @@ public partial class App : System.Windows.Application
         try
         {
             var loaded = _settingsLoader.LoadOrCreate();
-            candidatePipeline = CreatePipeline(loaded);
+            var loadedSecrets = _environmentFileLoader.LoadOrCreate();
+            candidatePipeline = CreatePipeline(loaded, loadedSecrets);
             await ApplyRuntimeEnabledAsync(false, previousSettings);
             _startupRegistration.SetEnabled(loaded.LaunchAtLogin);
             _controller.UpdateAudioSettings(loaded.Audio);
@@ -198,12 +204,15 @@ public partial class App : System.Windows.Application
             }
 
             _settings = loaded;
+            _secrets = loadedSecrets;
             _trayMenu?.ApplySettings(_settings.Enabled, _startupRegistration.IsEnabled);
             _trayMenu?.ShowInfo("Settings reloaded");
         }
         catch (Exception exception)
         {
             candidatePipeline?.Dispose();
+            Exception? rollbackException = null;
+            DictationPipeline? rollbackPipeline = null;
             try
             {
                 await ApplyRuntimeEnabledAsync(false, previousSettings);
@@ -211,19 +220,42 @@ public partial class App : System.Windows.Application
                 _controller.UpdateAudioSettings(previousSettings.Audio);
                 if (pipelineReplaced)
                 {
-                    _controller.UpdatePipeline(CreatePipeline(previousSettings));
+                    rollbackPipeline = CreatePipeline(previousSettings, previousSecrets);
+                    _controller.UpdatePipeline(rollbackPipeline);
+                    rollbackPipeline = null;
                 }
 
                 await ApplyRuntimeEnabledAsync(previousSettings.Enabled, previousSettings);
             }
-            catch
+            catch (Exception rollbackFailure)
             {
-                // Keep reporting the reload failure that initiated rollback.
+                rollbackPipeline?.Dispose();
+                rollbackException = rollbackFailure;
+                try
+                {
+                    await ApplyRuntimeEnabledAsync(false, previousSettings);
+                }
+                catch
+                {
+                    // The runtime is already being treated as disabled.
+                }
             }
 
             _settings = previousSettings;
-            _trayMenu?.ApplySettings(previousSettings.Enabled, previousRegistration);
-            _trayMenu?.ShowError($"Settings were not reloaded: {exception.Message}");
+            _secrets = previousSecrets;
+            if (rollbackException is null)
+            {
+                _trayMenu?.ApplySettings(previousSettings.Enabled, previousRegistration);
+                _trayMenu?.ShowError($"Settings were not reloaded: {exception.Message}");
+            }
+            else
+            {
+                _settings.Enabled = false;
+                _trayMenu?.ApplySettings(false, _startupRegistration.IsEnabled);
+                _trayMenu?.ShowError(
+                    $"Settings reload and rollback failed. Dictation remains disabled. " +
+                    $"{exception.Message} ({rollbackException.GetType().Name})");
+            }
         }
     }
 
@@ -300,27 +332,15 @@ public partial class App : System.Windows.Application
         _trayMenu?.ShowError(message);
     }
 
-    private DictationPipeline CreatePipeline(AppSettings settings)
+    private DictationPipeline CreatePipeline(
+        AppSettings settings,
+        ProviderSecrets secrets)
     {
-        ITranscriber transcriber = settings.Transcription.Provider switch
-        {
-            "local" => new WhisperCppTranscriber(
-                ResolveApplicationPath(settings.Transcription.LocalModelPath),
-                settings.Transcription.Language,
-                settings.Transcription.LocalThreads),
-            _ => throw new InvalidOperationException(
-                $"Transcription provider '{settings.Transcription.Provider}' is not available in this build.")
-        };
+        var transcriber = CreateTranscriber(settings, secrets);
 
         try
         {
-            ITextCleaner cleaner = settings.Cleanup.Provider switch
-            {
-                "basic" => new BasicTextCleaner(settings.Cleanup.Style),
-                "none" => new NoOpTextCleaner(),
-                _ => throw new InvalidOperationException(
-                    $"Cleanup provider '{settings.Cleanup.Provider}' is not available in this build.")
-            };
+            var cleaner = CreateTextCleaner(settings, secrets);
             return new DictationPipeline(
                 transcriber,
                 cleaner,
@@ -331,6 +351,90 @@ public partial class App : System.Windows.Application
             transcriber.Dispose();
             throw;
         }
+    }
+
+    private ITranscriber CreateTranscriber(
+        AppSettings settings,
+        ProviderSecrets secrets)
+    {
+        var providerName = settings.Transcription.Provider.ToLowerInvariant();
+        if (providerName == "local")
+        {
+            return CreateLocalTranscriber(settings.Transcription);
+        }
+
+        var provider = CloudProviderDefinition.Create(providerName, secrets);
+        ITranscriber cloud = new OpenAiCompatibleTranscriber(
+            provider,
+            providerName == "openai"
+                ? settings.Transcription.OpenaiModel
+                : settings.Transcription.GroqModel,
+            settings.Transcription.Language);
+
+        if (!settings.Transcription.FallbackToLocal)
+        {
+            return cloud;
+        }
+
+        try
+        {
+            return new FallbackTranscriber(
+                cloud,
+                CreateLocalTranscriber(settings.Transcription));
+        }
+        catch
+        {
+            cloud.Dispose();
+            throw;
+        }
+    }
+
+    private ITextCleaner CreateTextCleaner(
+        AppSettings settings,
+        ProviderSecrets secrets)
+    {
+        var providerName = settings.Cleanup.Provider.ToLowerInvariant();
+        if (providerName == "basic")
+        {
+            return new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant());
+        }
+
+        if (providerName == "none")
+        {
+            return new NoOpTextCleaner();
+        }
+
+        ITextCleaner cloud = new LlmTextCleaner(
+            CloudProviderDefinition.Create(providerName, secrets),
+            settings.Cleanup.Model);
+        if (!settings.Cleanup.FallbackToBasic)
+        {
+            return cloud;
+        }
+
+        try
+        {
+            return new FallbackTextCleaner(
+                cloud,
+                new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant()));
+        }
+        catch
+        {
+            if (cloud is IDisposable disposable)
+            {
+                disposable.Dispose();
+            }
+
+            throw;
+        }
+    }
+
+    private ITranscriber CreateLocalTranscriber(TranscriptionSettings settings)
+    {
+        return new WhisperCppTranscriber(
+            ResolveApplicationPath(settings.LocalModelPath),
+            settings.Language,
+            settings.LocalThreads);
     }
 
     private string ResolveApplicationPath(string configuredPath)
