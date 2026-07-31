@@ -314,11 +314,46 @@ internal static class TextCleanupPrompt
         """;
 }
 
+internal sealed record ChatCompletionProviderDefinition(
+    string DisplayName,
+    string ProviderName,
+    Uri Endpoint,
+    string ApiKeyName,
+    string ApiKey,
+    bool UseMaxTokens)
+{
+    public static ChatCompletionProviderDefinition FromCloud(
+        CloudProviderDefinition provider)
+    {
+        return new ChatCompletionProviderDefinition(
+            provider.Name,
+            provider.Name.ToLowerInvariant(),
+            provider.ChatCompletionsEndpoint,
+            provider.ApiKeyName,
+            provider.ApiKey,
+            UseMaxTokens: false);
+    }
+
+    public static ChatCompletionProviderDefinition ForLocal(
+        string displayName,
+        string providerName,
+        Uri endpoint)
+    {
+        return new ChatCompletionProviderDefinition(
+            displayName,
+            providerName,
+            endpoint,
+            string.Empty,
+            string.Empty,
+            UseMaxTokens: true);
+    }
+}
+
 public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(20);
 
-    private readonly CloudProviderDefinition _provider;
+    private readonly ChatCompletionProviderDefinition _provider;
     private readonly string _model;
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
@@ -330,6 +365,19 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
         string model,
         HttpClient? httpClient = null,
         TimeSpan? timeout = null)
+        : this(
+            ChatCompletionProviderDefinition.FromCloud(provider),
+            model,
+            httpClient,
+            timeout)
+    {
+    }
+
+    internal LlmTextCleaner(
+        ChatCompletionProviderDefinition provider,
+        string model,
+        HttpClient? httpClient = null,
+        TimeSpan? timeout = null)
     {
         _provider = provider;
         _model = model;
@@ -338,12 +386,24 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
         _timeout = timeout ?? DefaultTimeout;
     }
 
-    public string ProviderName => _provider.Name.ToLowerInvariant();
+    public string ProviderName => _provider.ProviderName;
 
     public void ValidateConfiguration()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        CloudValidation.Validate(_provider, _model);
+        if (!string.IsNullOrWhiteSpace(_provider.ApiKeyName)
+            && string.IsNullOrWhiteSpace(_provider.ApiKey))
+        {
+            throw new MissingApiKeyException(
+                _provider.DisplayName,
+                _provider.ApiKeyName);
+        }
+
+        if (string.IsNullOrWhiteSpace(_model))
+        {
+            throw new InvalidOperationException(
+                $"A model must be configured for the {_provider.DisplayName} provider.");
+        }
     }
 
     public async Task<string> CleanAsync(
@@ -357,25 +417,31 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_timeout);
 
-        var requestBody = new
+        var requestBody = new Dictionary<string, object>
         {
-            model = _model,
-            messages = new[]
+            ["model"] = _model,
+            ["messages"] = new[]
             {
                 new { role = "system", content = TextCleanupPrompt.System },
                 new { role = "user", content = transcript }
             },
-            temperature = 0,
-            max_completion_tokens = CalculateOutputLimit(transcript)
+            ["temperature"] = 0,
+            [_provider.UseMaxTokens ? "max_tokens" : "max_completion_tokens"] =
+                CalculateOutputLimit(transcript),
+            ["stream"] = false
         };
 
         try
         {
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
-                _provider.ChatCompletionsEndpoint);
-            request.Headers.Authorization =
-                new AuthenticationHeaderValue("Bearer", _provider.ApiKey);
+                _provider.Endpoint);
+            if (!string.IsNullOrWhiteSpace(_provider.ApiKey))
+            {
+                request.Headers.Authorization =
+                    new AuthenticationHeaderValue("Bearer", _provider.ApiKey);
+            }
+
             request.Content = new StringContent(
                 JsonSerializer.Serialize(requestBody),
                 Encoding.UTF8,
@@ -387,11 +453,15 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
         catch (OperationCanceledException exception)
             when (!cancellationToken.IsCancellationRequested)
         {
-            throw CloudRequestException.Timeout(_provider.Name, exception);
+            throw CloudRequestException.Timeout(
+                _provider.DisplayName,
+                exception);
         }
         catch (HttpRequestException exception)
         {
-            throw CloudRequestException.Transport(_provider.Name, exception);
+            throw CloudRequestException.Transport(
+                _provider.DisplayName,
+                exception);
         }
     }
 
@@ -426,7 +496,9 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
         {
             var statusCode = response.StatusCode;
             response.Dispose();
-            throw CloudRequestException.ApiError(_provider.Name, statusCode);
+            throw CloudRequestException.ApiError(
+                _provider.DisplayName,
+                statusCode);
         }
 
         return response;
@@ -451,14 +523,16 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
                 || contentElement.ValueKind != JsonValueKind.String
                 || string.IsNullOrWhiteSpace(contentElement.GetString()))
             {
-                throw CloudRequestException.Malformed(_provider.Name);
+                throw CloudRequestException.Malformed(_provider.DisplayName);
             }
 
             return contentElement.GetString()!.Trim();
         }
         catch (JsonException exception)
         {
-            throw CloudRequestException.Malformed(_provider.Name, exception);
+            throw CloudRequestException.Malformed(
+                _provider.DisplayName,
+                exception);
         }
     }
 }

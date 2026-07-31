@@ -11,6 +11,7 @@ public sealed class TrayMenu : IDisposable
     private readonly Icon _processingIcon;
     private readonly Icon _errorIcon;
     private readonly Forms.NotifyIcon _notifyIcon;
+    private readonly Forms.ToolStripMenuItem _statusItem;
     private readonly Forms.ToolStripMenuItem _meetingItem;
     private readonly Forms.ToolStripMenuItem _openMeetingNotesItem;
     private readonly Forms.ToolStripMenuItem _enabledItem;
@@ -52,12 +53,17 @@ public sealed class TrayMenu : IDisposable
         _processingIcon = LoadIcon("whispdows-tray-processing.ico");
         _errorIcon = LoadIcon("whispdows-tray-error.ico");
 
+        _statusItem = new Forms.ToolStripMenuItem("Disabled")
+        {
+            Enabled = false
+        };
+
         _meetingItem = CreateActionItem(
             "Start Meeting Recording",
             onMeetingRecordingRequested);
         _meetingItem.Visible = meetingNotesAvailable;
 
-        _enabledItem = new Forms.ToolStripMenuItem("Dictation enabled")
+        _enabledItem = new Forms.ToolStripMenuItem("&Dictation enabled")
         {
             CheckOnClick = true,
             Checked = enabled,
@@ -65,7 +71,7 @@ public sealed class TrayMenu : IDisposable
         };
         _enabledItem.CheckedChanged += EnabledItemOnCheckedChanged;
 
-        _launchAtLoginItem = new Forms.ToolStripMenuItem("Launch at login")
+        _launchAtLoginItem = new Forms.ToolStripMenuItem("&Launch at login")
         {
             CheckOnClick = true,
             Checked = launchAtLogin
@@ -73,22 +79,25 @@ public sealed class TrayMenu : IDisposable
         _launchAtLoginItem.CheckedChanged += LaunchAtLoginItemOnCheckedChanged;
 
         var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add(_statusItem);
         menu.Items.Add(_meetingItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(_enabledItem);
         menu.Items.Add(_launchAtLoginItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(CreateActionItem("Settings…", onOpenSettingsEditorRequested));
-        menu.Items.Add(CreateActionItem("Reload settings", onReloadRequested));
-        menu.Items.Add(CreateActionItem("Open settings folder", onOpenSettingsRequested));
+        var settingsItem = CreateActionItem("&Settings…", onOpenSettingsEditorRequested);
+        settingsItem.Font = new Font(menu.Font, FontStyle.Bold);
+        menu.Items.Add(settingsItem);
+        menu.Items.Add(CreateActionItem("&Reload settings", onReloadRequested));
+        menu.Items.Add(CreateActionItem("Open settings &folder", onOpenSettingsRequested));
         _openMeetingNotesItem = CreateActionItem(
             "Open MeetingNotes folder",
             onOpenMeetingNotesRequested);
         _openMeetingNotesItem.Visible = meetingNotesAvailable;
         menu.Items.Add(_openMeetingNotesItem);
-        menu.Items.Add(CreateActionItem("Open README", onOpenReadmeRequested));
+        menu.Items.Add(CreateActionItem("&Help / Documentation", onOpenReadmeRequested));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(CreateActionItem("Exit", onExitRequested));
+        menu.Items.Add(CreateActionItem("E&xit Whispdows", onExitRequested));
 
         _notifyIcon = new Forms.NotifyIcon
         {
@@ -97,7 +106,9 @@ public sealed class TrayMenu : IDisposable
             Text = "Whispdows",
             Visible = true
         };
+        _notifyIcon.DoubleClick += (_, _) => onOpenSettingsEditorRequested();
         UpdateMeetingItem();
+        UpdateIcon();
     }
 
     public void ApplySettings(
@@ -212,27 +223,57 @@ public sealed class TrayMenu : IDisposable
             return;
         }
 
-        _notifyIcon.Icon = _meetingNotesState switch
+        if (_meetingNotesState != MeetingNotesState.Idle)
         {
-            MeetingNotesState.Recording => _listeningIcon,
-            MeetingNotesState.Transcribing
-                or MeetingNotesState.GeneratingNotes
-                or MeetingNotesState.Saving => _processingIcon,
-            MeetingNotesState.Error => _errorIcon,
-            _ => (!_dictationAvailable
-                    || !_enabledItem.Checked
-                    || _dictationState == DictationState.Disabled)
-                ? (_meetingNotesAvailable ? _enabledIcon : _disabledIcon)
-                : _dictationState switch
-                {
-                    DictationState.Recording => _listeningIcon,
-                    DictationState.Transcribing
-                        or DictationState.Cleaning
-                        or DictationState.Pasting => _processingIcon,
-                    DictationState.Error => _errorIcon,
-                    _ => _enabledIcon
-                }
+            _notifyIcon.Icon = _meetingNotesState switch
+            {
+                MeetingNotesState.Recording => _listeningIcon,
+                MeetingNotesState.Transcribing
+                    or MeetingNotesState.GeneratingNotes
+                    or MeetingNotesState.Saving => _processingIcon,
+                MeetingNotesState.Error => _errorIcon,
+                _ => _enabledIcon
+            };
+            var meetingLabel = _meetingNotesState switch
+            {
+                MeetingNotesState.Recording => "Meeting recording",
+                MeetingNotesState.Transcribing => "Transcribing meeting",
+                MeetingNotesState.GeneratingNotes => "Generating meeting notes",
+                MeetingNotesState.Saving => "Saving meeting notes",
+                MeetingNotesState.Error => "Meeting notes need attention",
+                _ => "Ready"
+            };
+            _statusItem.Text = meetingLabel;
+            _notifyIcon.Text = $"Whispdows — {meetingLabel}";
+            return;
+        }
+
+        var effectiveState = !_enabledItem.Checked
+            ? DictationState.Disabled
+            : _dictationState;
+        var stateLabel = effectiveState switch
+        {
+            DictationState.Disabled => "Disabled",
+            DictationState.Recording => "Listening",
+            DictationState.Transcribing => "Transcribing",
+            DictationState.Cleaning => "Cleaning transcript",
+            DictationState.Pasting => "Pasting",
+            DictationState.Error => "Needs attention",
+            _ => "Ready"
         };
+
+        _notifyIcon.Icon = effectiveState switch
+        {
+            DictationState.Disabled => _disabledIcon,
+            DictationState.Recording => _listeningIcon,
+            DictationState.Transcribing
+                or DictationState.Cleaning
+                or DictationState.Pasting => _processingIcon,
+            DictationState.Error => _errorIcon,
+            _ => _enabledIcon
+        };
+        _statusItem.Text = stateLabel;
+        _notifyIcon.Text = $"Whispdows — {stateLabel}";
     }
 
     private void UpdateMeetingItem()
@@ -246,9 +287,9 @@ public sealed class TrayMenu : IDisposable
             _ => "Start Meeting Recording"
         };
         _meetingItem.Enabled = _meetingNotesAvailable
-            && _meetingNotesState is MeetingNotesState.Idle
+            && (_meetingNotesState is MeetingNotesState.Idle
                 or MeetingNotesState.Error
-                or MeetingNotesState.Recording;
+                or MeetingNotesState.Recording);
     }
 
     private static Icon LoadIcon(string fileName)

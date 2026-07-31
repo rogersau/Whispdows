@@ -1,8 +1,8 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Input;
+using System.Windows.Interop;
 using WpfControls = System.Windows.Controls;
 using WpfInput = System.Windows.Input;
 
@@ -52,6 +52,7 @@ public partial class SettingsWindow : Window
         SetDwmWindowAttribute(handle, DwmwaBorderColor, ref borderColor);
         SetDwmWindowAttribute(handle, DwmwaCaptionColor, ref captionColor);
         SetDwmWindowAttribute(handle, DwmwaTextColor, ref textColor);
+        ConstrainToWorkingArea(handle);
     }
 
     protected override void OnClosed(EventArgs e)
@@ -85,6 +86,8 @@ public partial class SettingsWindow : Window
         SelectValue(CleanupStyleBox, settings.Cleanup.Style);
         CleanupModelBox.Text = settings.Cleanup.Model;
         AzureEndpointBox.Text = settings.Cleanup.AzureEndpoint;
+        LocalCleanupModelBox.Text = settings.Cleanup.LocalModel;
+        LocalCleanupEndpointBox.Text = settings.Cleanup.LocalEndpoint;
         FallbackBasicBox.IsChecked = settings.Cleanup.FallbackToBasic;
 
         RestoreClipboardBox.IsChecked = settings.Paste.RestoreClipboard;
@@ -157,6 +160,28 @@ public partial class SettingsWindow : Window
         UpdateProviderPanels();
     }
 
+    private void FallbackBasicBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateProviderPanels();
+    }
+
+    private void LocalCleanupModelBox_OnTextChanged(
+        object sender,
+        WpfControls.TextChangedEventArgs e)
+    {
+        UpdateLocalSetupHint();
+    }
+
+    private void LocalModelPresetButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is WpfControls.Button { Tag: string model })
+        {
+            LocalCleanupModelBox.Text = model;
+            LocalCleanupModelBox.Focus();
+            LocalCleanupModelBox.CaretIndex = LocalCleanupModelBox.Text.Length;
+        }
+    }
+
     private void UpdateProviderPanels()
     {
         var transcriptionProvider = SelectedValue(TranscriptionProviderBox);
@@ -172,15 +197,55 @@ public partial class SettingsWindow : Window
         AzureTranscriptionPanel.Visibility = transcriptionProvider == "azure"
             ? Visibility.Visible
             : Visibility.Collapsed;
+        FallbackLocalBox.Visibility = transcriptionProvider == "local"
+            ? Visibility.Collapsed
+            : Visibility.Visible;
 
         var cleanupProvider = SelectedValue(CleanupProviderBox);
         var isCloudCleanup = cleanupProvider is "azure-openai" or "openai" or "groq";
+        var isLocalAiCleanup = cleanupProvider == "ollama";
+        var hasAiCleanup = isCloudCleanup || isLocalAiCleanup;
+        LocalCleanupPanel.Visibility = isLocalAiCleanup
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         CloudCleanupPanel.Visibility = isCloudCleanup
             ? Visibility.Visible
             : Visibility.Collapsed;
         AzureCleanupPanel.Visibility = cleanupProvider == "azure-openai"
             ? Visibility.Visible
             : Visibility.Collapsed;
+        FallbackBasicBox.Visibility = hasAiCleanup
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        var usesBasicCleanup = cleanupProvider == "basic"
+            || (hasAiCleanup && FallbackBasicBox.IsChecked == true);
+        CleanupStyleLabel.IsEnabled = usesBasicCleanup;
+        CleanupStyleBox.IsEnabled = usesBasicCleanup;
+
+        CleanupPrivacyText.Text = cleanupProvider switch
+        {
+            "ollama" =>
+                "Cleanup runs through the local endpoint on this PC. Whispdows does not send the transcript to a cloud cleanup service.",
+            "azure-openai" or "openai" or "groq" =>
+                "Cloud cleanup sends the transcript to the selected provider. API keys are stored securely for this Windows user.",
+            "none" => "The raw transcript is pasted without any cleanup.",
+            _ => "Basic cleanup is deterministic and stays entirely on this PC."
+        };
+        UpdateLocalSetupHint();
+    }
+
+    private void UpdateLocalSetupHint()
+    {
+        if (LocalSetupHint is null || LocalCleanupModelBox is null)
+        {
+            return;
+        }
+
+        var model = LocalCleanupModelBox.Text.Trim();
+        LocalSetupHint.Text = string.IsNullOrWhiteSpace(model)
+            ? "Install Ollama, choose a model above, then pull it before enabling local AI cleanup."
+            : $"Setup command:  ollama pull {model}";
     }
 
     private async void ApplyButton_OnClick(object sender, RoutedEventArgs e)
@@ -322,8 +387,15 @@ public partial class SettingsWindow : Window
         _recordingModifierKeys.Clear();
         _firstRecordingModifier = null;
         _recordingSawMultipleModifiers = false;
-        ShortcutBox.IsEnabled = true;
-        RecordHotkeyButton.Content = "Record hotkey";
+        if (ShortcutBox is not null)
+        {
+            ShortcutBox.IsEnabled = true;
+        }
+
+        if (RecordHotkeyButton is not null)
+        {
+            RecordHotkeyButton.Content = "Record hotkey";
+        }
     }
 
     private static Key EffectiveKey(WpfInput.KeyEventArgs e)
@@ -422,6 +494,7 @@ public partial class SettingsWindow : Window
 
     private AppSettings? TryBuildSettings()
     {
+        ErrorBorder.Visibility = Visibility.Collapsed;
         var settings = SettingsSnapshot.Clone(_template);
         var errors = new List<string>();
 
@@ -464,6 +537,8 @@ public partial class SettingsWindow : Window
             errors);
         settings.Cleanup.Model = CleanupModelBox.Text.Trim();
         settings.Cleanup.AzureEndpoint = AzureEndpointBox.Text.Trim();
+        settings.Cleanup.LocalModel = LocalCleanupModelBox.Text.Trim();
+        settings.Cleanup.LocalEndpoint = LocalCleanupEndpointBox.Text.Trim();
         settings.Cleanup.FallbackToBasic = FallbackBasicBox.IsChecked == true;
 
         settings.Paste.RestoreClipboard = RestoreClipboardBox.IsChecked == true;
@@ -476,6 +551,7 @@ public partial class SettingsWindow : Window
         errors.AddRange(SettingsValidator.Validate(settings));
         if (errors.Count > 0)
         {
+            FocusFirstInvalidField(errors);
             ShowError(string.Join(Environment.NewLine, errors.Distinct(StringComparer.Ordinal)));
             return null;
         }
@@ -523,6 +599,11 @@ public partial class SettingsWindow : Window
 
     private void ClearApiKeyInputs()
     {
+        if (OpenAiApiKeyBox is null)
+        {
+            return;
+        }
+
         OpenAiApiKeyBox.Clear();
         GroqApiKeyBox.Clear();
         AzureApiKeyBox.Clear();
@@ -572,33 +653,184 @@ public partial class SettingsWindow : Window
         comboBox.SelectedItem = comboBox.Items
             .OfType<WpfControls.ComboBoxItem>()
             .FirstOrDefault(item => string.Equals(
-                item.Content?.ToString(),
+                ItemValue(item),
                 value,
                 StringComparison.OrdinalIgnoreCase));
     }
 
     private static string SelectedValue(WpfControls.ComboBox comboBox)
     {
-        return (comboBox.SelectedItem as WpfControls.ComboBoxItem)?.Content?.ToString() ?? string.Empty;
+        return comboBox.SelectedItem is WpfControls.ComboBoxItem item
+            ? ItemValue(item)
+            : string.Empty;
+    }
+
+    private static string ItemValue(WpfControls.ComboBoxItem item)
+    {
+        return item.Tag?.ToString() ?? item.Content?.ToString() ?? string.Empty;
+    }
+
+    private void FocusFirstInvalidField(IReadOnlyCollection<string> errors)
+    {
+        WpfControls.Control? control = errors
+            .Select(ResolveInvalidControl)
+            .FirstOrDefault(candidate => candidate is not null);
+        control?.Focus();
+    }
+
+    private WpfControls.Control? ResolveInvalidControl(string error)
+    {
+        if (error.StartsWith("hotkey", StringComparison.OrdinalIgnoreCase)
+            || error.Contains("shortcut", StringComparison.OrdinalIgnoreCase))
+        {
+            return ShortcutBox;
+        }
+
+        if (error.StartsWith("audio.deviceId", StringComparison.OrdinalIgnoreCase))
+        {
+            return AudioDeviceBox;
+        }
+
+        if (error.StartsWith("audio.maxSeconds", StringComparison.OrdinalIgnoreCase))
+        {
+            return MaxSecondsBox;
+        }
+
+        if (error.StartsWith("transcription.provider", StringComparison.OrdinalIgnoreCase))
+        {
+            return TranscriptionProviderBox;
+        }
+
+        if (error.StartsWith("transcription.language", StringComparison.OrdinalIgnoreCase))
+        {
+            return LanguageBox;
+        }
+
+        if (error.StartsWith("transcription.localModelPath", StringComparison.OrdinalIgnoreCase))
+        {
+            return LocalModelPathBox;
+        }
+
+        if (error.StartsWith("transcription.localThreads", StringComparison.OrdinalIgnoreCase))
+        {
+            return LocalThreadsBox;
+        }
+
+        if (error.StartsWith("cleanup.provider", StringComparison.OrdinalIgnoreCase))
+        {
+            return CleanupProviderBox;
+        }
+
+        if (error.StartsWith("cleanup.localModel", StringComparison.OrdinalIgnoreCase))
+        {
+            return LocalCleanupModelBox;
+        }
+
+        if (error.StartsWith("cleanup.localEndpoint", StringComparison.OrdinalIgnoreCase))
+        {
+            return LocalCleanupEndpointBox;
+        }
+
+        if (error.StartsWith("cleanup.azureEndpoint", StringComparison.OrdinalIgnoreCase))
+        {
+            return AzureEndpointBox;
+        }
+
+        if (error.StartsWith("cleanup.model", StringComparison.OrdinalIgnoreCase))
+        {
+            return CleanupModelBox;
+        }
+
+        if (error.StartsWith("cleanup.style", StringComparison.OrdinalIgnoreCase))
+        {
+            return CleanupStyleBox;
+        }
+
+        if (error.StartsWith("paste.restoreDelayMs", StringComparison.OrdinalIgnoreCase))
+        {
+            return RestoreDelayBox;
+        }
+
+        return null;
     }
 
     private void SetBusy(bool busy)
     {
         ApplyButton.IsEnabled = !busy;
         CancelButton.IsEnabled = !busy;
-        RecordHotkeyButton.IsEnabled = !busy;
+        SettingsScroll.IsEnabled = !busy;
+        SaveProgress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        if (busy)
+        {
+            ErrorBorder.Visibility = Visibility.Collapsed;
+        }
+
         ApplyButton.Content = busy ? "Applying…" : "Save & Apply";
     }
 
     private void ShowError(string message)
     {
-        ErrorText.Text = message;
+        SaveProgress.Visibility = Visibility.Collapsed;
+        ErrorText.Text = FriendlyError(message);
         ErrorBorder.Visibility = Visibility.Visible;
+    }
+
+    private static string FriendlyError(string message)
+    {
+        return message
+            .Replace("hotkey.shortcut", "Shortcut", StringComparison.Ordinal)
+            .Replace("audio.deviceId", "Microphone / device ID", StringComparison.Ordinal)
+            .Replace("audio.maxSeconds", "Maximum recording length", StringComparison.Ordinal)
+            .Replace("transcription.provider", "Transcription provider", StringComparison.Ordinal)
+            .Replace("transcription.language", "Language code", StringComparison.Ordinal)
+            .Replace("transcription.localModelPath", "Whisper model path", StringComparison.Ordinal)
+            .Replace("transcription.localThreads", "CPU threads", StringComparison.Ordinal)
+            .Replace("cleanup.provider", "Cleanup provider", StringComparison.Ordinal)
+            .Replace("cleanup.localModel", "Local cleanup model", StringComparison.Ordinal)
+            .Replace("cleanup.localEndpoint", "Local cleanup endpoint", StringComparison.Ordinal)
+            .Replace("cleanup.azureEndpoint", "Azure OpenAI endpoint", StringComparison.Ordinal)
+            .Replace("cleanup.model", "Cleanup model / deployment", StringComparison.Ordinal)
+            .Replace("cleanup.style", "Basic cleanup style", StringComparison.Ordinal)
+            .Replace("paste.restoreDelayMs", "Clipboard restore delay", StringComparison.Ordinal);
     }
 
     private static int ColorRef(byte red, byte green, byte blue)
     {
         return red | (green << 8) | (blue << 16);
+    }
+
+    private void ConstrainToWorkingArea(nint handle)
+    {
+        var screen = System.Windows.Forms.Screen.FromHandle((IntPtr)handle);
+        if (HwndSource.FromHwnd(handle) is not HwndSource source
+            || source.CompositionTarget is null)
+        {
+            return;
+        }
+
+        var fromDevice = source.CompositionTarget.TransformFromDevice;
+        var topLeft = fromDevice.Transform(new System.Windows.Point(
+            screen.WorkingArea.Left,
+            screen.WorkingArea.Top));
+        var bottomRight = fromDevice.Transform(new System.Windows.Point(
+            screen.WorkingArea.Right,
+            screen.WorkingArea.Bottom));
+        const double margin = 16;
+        var availableWidth = Math.Max(
+            320,
+            bottomRight.X - topLeft.X - (margin * 2));
+        var availableHeight = Math.Max(
+            420,
+            bottomRight.Y - topLeft.Y - (margin * 2));
+
+        MinWidth = Math.Min(MinWidth, availableWidth);
+        MinHeight = Math.Min(MinHeight, availableHeight);
+        MaxWidth = availableWidth;
+        MaxHeight = availableHeight;
+        Width = Math.Min(Width, availableWidth);
+        Height = Math.Min(Height, availableHeight);
+        Left = topLeft.X + ((bottomRight.X - topLeft.X - Width) / 2);
+        Top = topLeft.Y + ((bottomRight.Y - topLeft.Y - Height) / 2);
     }
 
     private static void SetDwmWindowAttribute(

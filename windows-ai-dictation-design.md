@@ -22,22 +22,23 @@ Recommended implementation:
 
 The default build should include `small.en` so it works immediately without internet access. The model is loaded lazily on the first local dictation and then kept in memory until the app exits.
 
-### Important simplification: offline cleanup
+### Important simplification: optional local AI cleanup
 
-A local LLM is deliberately **not** included in version 1. Bundling llama.cpp and another model would make the installer, memory use, startup, configuration, and support burden substantially larger.
+A local LLM is deliberately **not bundled** with version 1. Bundling another inference runtime and model would make the installer, memory use, startup, configuration, and support burden substantially larger.
 
-The tool still works fully offline as follows:
+The tool works fully offline without another runtime as follows:
 
 1. Local whisper.cpp transcribes the audio.
 2. A small deterministic cleaner trims whitespace, removes obvious repeated filler tokens, and normalises basic punctuation.
 3. The result is pasted.
 
-When an OpenAI or Groq key is configured, the raw transcript can instead pass through a cloud LLM for better cleanup. This gives a clear choice:
+For higher-quality cleanup, the raw transcript can instead pass through either an optional Ollama model on the local loopback interface or an explicitly configured cloud LLM. This gives three clear choices:
 
 - **Fully offline:** local transcription + basic cleanup
+- **Local AI mode:** local transcription + a user-managed tiny Ollama model
 - **Polished cloud mode:** local or cloud transcription + LLM cleanup
 
-A local LLM cleaner can be added later only if the basic offline cleanup proves inadequate.
+The Whispdows application never starts Ollama or downloads its models. The packaged installer may explicitly offer to install the Ollama runtime when it is missing, but model installation remains user-controlled. A missing or failed optional local model follows the same safe fallback policy as cloud cleanup.
 
 ## 2. Goals
 
@@ -50,11 +51,11 @@ The application must:
 - Transcribe using either:
   - bundled whisper.cpp locally; or
   - OpenAI/Groq, selected explicitly in configuration.
-- Optionally clean the transcript with an LLM.
+- Optionally clean the transcript with a local Ollama or cloud LLM.
 - Paste into the application that was active when dictation began.
 - Restore the previous clipboard after pasting where possible.
 - Offer an on/off toggle and launch-at-login toggle in the Windows notification area.
-- Store non-secret settings locally in readable files and protect API keys with per-user encryption.
+- Store settings locally in readable files.
 - Send no telemetry and retain no audio or transcript history.
 - Be installable with one standalone setup executable.
 
@@ -71,6 +72,7 @@ Do not build these in version 1:
 - Transcript history
 - Audio history
 - Automatic updates
+- A full editor or history surface beyond the focused settings window
 - App-specific integrations for Teams, Outlook, browsers, or editors
 - Reading surrounding text from the focused application
 - Code-specific dictation commands
@@ -159,6 +161,7 @@ flowchart LR
     Transcriber --> Cloud[OpenAI-compatible cloud transcriber]
     Controller --> Cleaner[ITextCleaner]
     Cleaner --> Basic[Basic local cleaner]
+    Cleaner --> Ollama[Loopback Ollama cleaner]
     Cleaner --> LLM[OpenAI/Groq LLM cleaner]
     Controller --> Inserter[TextInserter]
     Inserter --> Clipboard[Clipboard snapshot/set/restore]
@@ -229,7 +232,7 @@ Behaviour:
 
 - `Enabled` installs or removes the keyboard hook.
 - `Launch at login` writes or removes a per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value.
-- `Reload settings` validates and reloads `settings.json` and the encrypted `secrets.dat` without restarting.
+- `Reload settings` validates and reloads `settings.json` and the encrypted `secrets.dat` store without restarting.
 - `Open settings folder` opens `%LOCALAPPDATA%\Whispdows`.
 - `Settings…` opens the graphical editor for the hotkey, audio device, providers, paste behavior, and encrypted API keys.
 
@@ -318,7 +321,7 @@ interface ITextCleaner
 }
 ```
 
-Implement two cleaners.
+Implement deterministic, local-AI, and cloud cleaners behind the same interface.
 
 #### `BasicTextCleaner`
 
@@ -336,6 +339,10 @@ It must not broadly rewrite text because regex-based “smart” cleanup can sil
 #### `LlmTextCleaner`
 
 Use OpenAI or Groq according to settings. Send only the raw transcript and a fixed, short system prompt.
+
+#### `OllamaTextCleaner`
+
+Use the same Chat Completions cleanup module through an unauthenticated, loopback-only OpenAI-compatible endpoint. Keep the model name and base endpoint configurable, default to `gemma3:1b`, use the provider-compatible `max_tokens` field, disable streaming, and allow a longer cold-start timeout. Do not launch Ollama, pull a model, or make a network request during settings validation.
 
 Recommended prompt:
 
@@ -462,6 +469,9 @@ The installer creates example configuration files only when they do not already 
   "cleanup": {
     "provider": "basic",
     "model": "",
+    "localModel": "gemma3:1b",
+    "localEndpoint": "http://127.0.0.1:11434/v1",
+    "azureEndpoint": "",
     "style": "auto",
     "fallbackToBasic": true
   },
@@ -477,7 +487,7 @@ Allowed values:
 
 ```text
 transcription.provider = local | openai | groq | azure
-cleanup.provider       = basic | openai | groq | none
+cleanup.provider       = basic | ollama | openai | groq | azure-openai | none
 cleanup.style          = auto | sentence | fragment
 ```
 
@@ -485,10 +495,7 @@ cleanup.style          = auto | sentence | fragment
 
 ### `secrets.dat`
 
-The settings editor accepts OpenAI, Groq, and Azure keys through masked password
-fields. The store is encrypted with Windows DPAPI using the current user scope;
-keys are never written to `settings.json` or logs. Existing `.env` files are
-supported only as a one-time migration source and are cleared after import.
+The settings editor accepts OpenAI, Groq, and Azure keys through masked password fields. The store is encrypted with Windows DPAPI using the current user scope; keys are never written to `settings.json` or logs. Existing `.env` files are supported only as a one-time migration source and are cleared after import.
 
 ### Validation
 
@@ -534,7 +541,7 @@ Whispdows/
 │  └─ ggml-small.en.bin
 ├─ README.md
 ├─ settings.example.json
-└─ .env.example
+└─ secrets.dat (created at runtime)
 ```
 
 Do not split this into multiple class-library projects. One app project and one test project are enough.
@@ -572,6 +579,13 @@ cleanup.provider = basic or none
 - Transcription runs through local whisper.cpp.
 - No audio or transcript is sent over the network.
 - No audio or transcript is saved after the operation.
+
+### Local AI mode
+
+- Transcription can remain entirely local through whisper.cpp.
+- Cleanup sends only the transcript and fixed instructions to an HTTP(S) loopback endpoint.
+- Whispdows sends no API key, does not manage the Ollama process, and does not download a model.
+- Failure falls back to `BasicTextCleaner` when configured, so a successful transcript is preserved.
 
 ### Cloud mode
 
@@ -617,6 +631,8 @@ Use a per-user Inno Setup installer:
 
 - Install to `%LOCALAPPDATA%\Programs\Whispdows`.
 - Require no administrator rights.
+- Detect `ollama.exe`; when it is missing, offer an unchecked task that installs the official `Ollama.Ollama` package through Windows Package Manager.
+- Do not pull an Ollama model automatically, change an existing Ollama installation, or uninstall Ollama with Whispdows.
 - Include the .NET runtime, native whisper.cpp runtime, and `small.en` model.
 - Add Start menu shortcuts for `Whispdows`, `README`, and `Uninstall`.
 - Optionally enable launch at login during installation.
@@ -674,8 +690,8 @@ Version 1 is complete when all of the following work:
 4. Releasing it stops capture and runs local whisper.cpp transcription.
 5. Local/basic mode works with the network disconnected.
 6. OpenAI, Groq, and Azure Speech transcription can each be selected in `settings.json` and read their key from the encrypted per-user secret store.
-7. OpenAI or Groq LLM cleanup can be selected independently.
-8. LLM cleanup failure falls back to basic cleanup.
+7. Ollama, OpenAI, Groq, or Azure OpenAI cleanup can be selected independently.
+8. Local or cloud LLM cleanup failure falls back to basic cleanup.
 9. Text pastes correctly into at least Notepad, Edge/Chrome, Outlook, Teams, and VS Code when those applications are not elevated.
 10. Ordinary text clipboard contents are restored after paste.
 11. Focus changes and elevated targets leave the result safely on the clipboard.
@@ -728,9 +744,10 @@ At this point the application is already useful and fully offline.
 
 Do not implement these pre-emptively:
 
-- Local llama.cpp cleanup
+- Bundled llama.cpp/Ollama cleanup runtime and model
 - CUDA or Vulkan acceleration
 - Auto model downloads
+- A hotkey-capture settings UI
 - Multiple style profiles
 - Per-application behaviour
 - Voice activity detection before transcription
