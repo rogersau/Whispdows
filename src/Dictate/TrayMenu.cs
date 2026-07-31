@@ -10,10 +10,6 @@ public sealed class TrayMenu : IDisposable
     private readonly Forms.ToolStripMenuItem _launchAtLoginItem;
     private readonly Action<bool> _onEnabledChanged;
     private readonly Action<bool> _onLaunchAtLoginChanged;
-    private readonly Action _onReloadRequested;
-    private readonly Action _onOpenSettingsRequested;
-    private readonly Action _onOpenReadmeRequested;
-    private readonly Action _onExitRequested;
     private bool _updatingChecks;
     private bool _disposed;
 
@@ -29,10 +25,6 @@ public sealed class TrayMenu : IDisposable
     {
         _onEnabledChanged = onEnabledChanged;
         _onLaunchAtLoginChanged = onLaunchAtLoginChanged;
-        _onReloadRequested = onReloadRequested;
-        _onOpenSettingsRequested = onOpenSettingsRequested;
-        _onOpenReadmeRequested = onOpenReadmeRequested;
-        _onExitRequested = onExitRequested;
 
         _enabledItem = new Forms.ToolStripMenuItem("Enabled")
         {

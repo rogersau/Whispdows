@@ -16,7 +16,7 @@ public enum PillState
     Error
 }
 
-public partial class PillWindow : Window
+public partial class PillWindow : Window, IRecordingPill
 {
     private const int GwlExStyle = -20;
     private const long WsExNoActivate = 0x08000000L;

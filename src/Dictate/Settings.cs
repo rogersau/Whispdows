@@ -209,9 +209,9 @@ public static class SettingsValidator
         {
             errors.Add("hotkey must be an object.");
         }
-        else if (string.IsNullOrWhiteSpace(settings.Hotkey.Shortcut))
+        else if (!HotkeyParser.TryParse(settings.Hotkey.Shortcut, out _, out var hotkeyError))
         {
-            errors.Add("hotkey.shortcut must not be empty.");
+            errors.Add(hotkeyError!);
         }
 
         if (settings.Audio is null)

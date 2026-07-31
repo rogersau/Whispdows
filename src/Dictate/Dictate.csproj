@@ -14,6 +14,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="NAudio.Wasapi" Version="2.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Include="..\..\README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\settings.example.json" Link="settings.example.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\.env.example" Link=".env.example" CopyToOutputDirectory="PreserveNewest" />

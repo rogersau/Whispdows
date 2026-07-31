@@ -50,6 +50,18 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void Save_rejects_an_unparseable_hotkey()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Hotkey.Shortcut = "Ctrl++Space";
+
+        var exception = Assert.Throws<SettingsValidationException>(() => sandbox.Loader.Save(settings));
+
+        Assert.Contains("empty key", exception.Message);
+    }
+
+    [Fact]
     public void Settings_paths_keep_application_and_user_data_separate()
     {
         using var sandbox = new TestSandbox();
