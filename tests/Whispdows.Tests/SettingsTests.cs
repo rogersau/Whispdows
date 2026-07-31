@@ -14,10 +14,13 @@ public sealed class SettingsTests
         Assert.True(settings.Enabled);
         Assert.Equal("RightCtrl", settings.Hotkey.Shortcut);
         Assert.Equal(90, settings.Audio.MaxSeconds);
-        Assert.Equal("local", settings.Transcription.Provider);
+        Assert.Equal("windowsml", settings.Transcription.Provider);
+        Assert.Equal("whisper-tiny", settings.Transcription.WindowsMlModel);
         Assert.Equal("gpt-4o-transcribe", settings.Transcription.OpenaiModel);
         Assert.Equal("en-US", settings.Transcription.AzureLocale);
-        Assert.Equal("basic", settings.Cleanup.Provider);
+        Assert.Equal("windowsml", settings.Cleanup.Provider);
+        Assert.Equal("qwen2.5-0.5b", settings.Cleanup.WindowsMlModel);
+        Assert.Equal("gpt-4o-mini", settings.Cleanup.OnlineModel);
         Assert.Equal("gemma3:1b", settings.Cleanup.LocalModel);
         Assert.Equal("http://127.0.0.1:11434/v1", settings.Cleanup.LocalEndpoint);
         Assert.True(File.Exists(sandbox.Paths.SettingsFile));

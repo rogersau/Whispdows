@@ -9,9 +9,12 @@
     "maxSeconds": 90
   },
   "transcription": {
-    "provider": "local",
+    "provider": "windowsml",
     "language": "en",
     "fallbackToLocal": true,
+    "fallbackToOnline": true,
+    "onlineProvider": "openai",
+    "windowsMlModel": "whisper-tiny",
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
     "openaiModel": "gpt-4o-transcribe",
@@ -20,12 +23,16 @@
     "azureLocale": "en-US"
   },
   "cleanup": {
-    "provider": "basic",
+    "provider": "windowsml",
     "model": "",
+    "windowsMlModel": "qwen2.5-0.5b",
+    "onlineModel": "gpt-4o-mini",
+    "onlineProvider": "openai",
     "localModel": "gemma3:1b",
     "localEndpoint": "http://127.0.0.1:11434/v1",
     "azureEndpoint": "",
     "style": "auto",
+    "fallbackToOnline": true,
     "fallbackToBasic": true
   },
   "paste": {

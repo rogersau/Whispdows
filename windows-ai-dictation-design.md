@@ -1,7 +1,7 @@
 # Whispdows: Lean Windows AI Dictation Tool Design
 
-**Status:** Proposed design  
-**Target:** Windows 11 x64, one user, per-user installation  
+**Status:** Implemented migration baseline
+**Target:** Windows 11 24H2 (build 26100+), x64 or ARM64, one user, per-user installation
 **Working name:** `Whispdows`
 
 ## 1. Design summary
@@ -14,31 +14,25 @@ Recommended implementation:
 - **WPF** for the recording pill and minimal Windows UI
 - **`System.Windows.Forms.NotifyIcon`** for the Windows notification-area menu
 - **NAudio/WASAPI** for microphone capture
-- **Whisper.net**, backed by **whisper.cpp**, for persistent in-process local transcription
+- **Windows ML** with **Foundry Local** catalog models for on-device transcription and cleanup, with automatic NPU/GPU/CPU execution-provider selection
 - Direct `HttpClient` calls for the OpenAI-compatible Groq/OpenAI transcription endpoints
 - A low-level Windows keyboard hook for hold-to-talk key-down and key-up events
 - Clipboard replacement plus simulated `Ctrl+V` for insertion
 - A self-contained, per-user **Inno Setup** installer
 
-The default build should include `small.en` so it works immediately without internet access. The model is loaded lazily on the first local dictation and then kept in memory until the app exits.
+The default build uses the Foundry Local aliases `whisper-tiny` for transcription and `qwen2.5-0.5b` for cleanup. Models and execution-provider packages are downloaded lazily on first local use, cached under `%LOCALAPPDATA%\Whispdows\windowsml`, and kept available through the process lifetime.
 
-### Important simplification: optional local AI cleanup
+### Local-first model policy
 
-A local LLM is deliberately **not bundled** with version 1. Bundling another inference runtime and model would make the installer, memory use, startup, configuration, and support burden substantially larger.
+Windows ML is the primary local inference path. Foundry Local owns model discovery, download, caching, and execution-provider registration; Windows ML selects the best available NPU, GPU, or CPU path for the machine. The app does not download model files during installation or startup.
 
-The tool works fully offline without another runtime as follows:
+The tool works offline after the first local model/runtime download:
 
-1. Local whisper.cpp transcribes the audio.
-2. A small deterministic cleaner trims whitespace, removes obvious repeated filler tokens, and normalises basic punctuation.
+1. Windows ML transcribes the audio with the configured Whisper catalog alias.
+2. Windows ML cleans the transcript with the configured local language-model alias.
 3. The result is pasted.
 
-For higher-quality cleanup, the raw transcript can instead pass through either an optional Ollama model on the local loopback interface or an explicitly configured cloud LLM. This gives three clear choices:
-
-- **Fully offline:** local transcription + basic cleanup
-- **Local AI mode:** local transcription + a user-managed tiny Ollama model
-- **Polished cloud mode:** local or cloud transcription + LLM cleanup
-
-The Whispdows application never starts Ollama or downloads its models. The packaged installer may explicitly offer to install the Ollama runtime when it is missing, but model installation remains user-controlled. A missing or failed optional local model follows the same safe fallback policy as cloud cleanup.
+If local inference is unavailable or fails, the configured online provider can be used as an explicit fallback. The older GGML/Whisper.net and Ollama paths remain compatibility options, but are not the default design.
 
 ## 2. Goals
 
@@ -49,9 +43,9 @@ The application must:
 - Stop recording when the trigger key is released.
 - Show a small, non-activating floating pill while recording.
 - Transcribe using either:
-  - bundled whisper.cpp locally; or
+  - Windows ML locally; or
   - OpenAI/Groq, selected explicitly in configuration.
-- Optionally clean the transcript with a local Ollama or cloud LLM.
+- Optionally clean the transcript with Windows ML, Ollama, or a cloud LLM.
 - Paste into the application that was active when dictation began.
 - Restore the previous clipboard after pasting where possible.
 - Offer an on/off toggle and launch-at-login toggle in the Windows notification area.
@@ -157,10 +151,11 @@ flowchart LR
     Controller --> Pill[Floating pill]
     Controller --> Recorder[AudioRecorder]
     Recorder --> Transcriber[ITranscriber]
-    Transcriber --> Local[WhisperCppTranscriber]
+    Transcriber --> Local[WindowsMlTranscriber]
     Transcriber --> Cloud[OpenAI-compatible cloud transcriber]
     Controller --> Cleaner[ITextCleaner]
     Cleaner --> Basic[Basic local cleaner]
+    Cleaner --> WindowsMl[Windows ML local cleaner]
     Cleaner --> Ollama[Loopback Ollama cleaner]
     Cleaner --> LLM[OpenAI/Groq LLM cleaner]
     Controller --> Inserter[TextInserter]
@@ -251,38 +246,31 @@ Recording rules:
 
 A 90-second mono 16 kHz 16-bit recording is only a few megabytes, so an in-memory stream is sufficient and avoids temporary audio files.
 
-### 8.3 Local transcription
+### 8.3 Windows ML transcription
 
-Implement `WhisperCppTranscriber` using Whisper.net and the CPU whisper.cpp runtime.
+Implement `WindowsMlTranscriber` over a shared `WindowsMlRuntime` that owns Foundry Local manager/catalog/model lifecycle.
 
 Reasons:
 
-- It still uses whisper.cpp.
-- The model can stay loaded between dictations.
-- There is no repeated process startup or repeated model loading.
-- There is no P/Invoke layer to maintain directly.
-- There is no localhost server process to supervise.
+- Windows ML can select the best available NPU, GPU, or CPU execution provider.
+- Foundry Local owns model discovery, download, registration, and per-user caching.
+- The model can stay loaded between dictations without a separate localhost process.
+- The provider seam keeps fallback behavior independent from model/runtime details.
 
 Behaviour:
 
-- Load the configured model lazily on first use.
-- Keep one factory/model instance alive until application exit.
-- Process one recording at a time.
+- Resolve the configured catalog alias lazily on first use.
+- Download and load the model through Foundry Local, then reuse it until application exit.
+- Process one recording at a time through a live transcription session.
 - Set the language to English by default; allow `auto` or another language in settings.
 - Return plain text with no timestamps.
 - Support cancellation on application exit.
 
-Recommended bundled model:
+Default model:
 
-- `ggml-small.en.bin`
-- Approximately 466 MiB on disk and about 852 MB working memory according to whisper.cpp’s published model table.
+- `whisper-tiny`, configurable by alias through `transcription.windowsMlModel`.
 
-Optional manual replacement:
-
-- `medium.en` for greater accuracy on a machine with enough memory
-- a quantised `small.en` model if installer size matters more than maximum accuracy
-
-Do not build a model picker UI. The model is selected by path in `settings.json`.
+Do not build a model-file picker UI. The model is selected by Foundry Local catalog alias. The older `WhisperCppTranscriber` and GGML model path remain only for existing configurations and are not the primary design.
 
 ### 8.4 Cloud transcription
 
@@ -305,7 +293,8 @@ No provider is selected automatically. The `transcription.provider` setting is a
 
 Recommended failure policy:
 
-- If a cloud request fails and `fallbackToLocal` is `true`, run the bundled local transcriber.
+- If a Windows ML request fails and `fallbackToOnline` is `true`, run the configured online transcriber.
+- If a cloud request fails and `fallbackToLocal` is `true`, run the configured local fallback.
 - If the required API key is missing, show a configuration error immediately rather than attempting a request.
 - Use a bounded HTTP timeout.
 - Do not repeatedly retry and create duplicate API charges.
@@ -322,6 +311,10 @@ interface ITextCleaner
 ```
 
 Implement deterministic, local-AI, and cloud cleaners behind the same interface.
+
+#### `WindowsMlTextCleaner`
+
+Use the Foundry Local chat client with the configured `qwen2.5-0.5b` catalog alias by default. Send only the raw transcript and the fixed cleanup prompt. Load the model lazily and keep it available through the process lifetime.
 
 #### `BasicTextCleaner`
 
@@ -456,9 +449,12 @@ The installer creates example configuration files only when they do not already 
     "maxSeconds": 90
   },
   "transcription": {
-    "provider": "local",
+    "provider": "windowsml",
     "language": "en",
     "fallbackToLocal": true,
+    "fallbackToOnline": true,
+    "onlineProvider": "openai",
+    "windowsMlModel": "whisper-tiny",
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
     "openaiModel": "gpt-4o-transcribe",
@@ -467,12 +463,16 @@ The installer creates example configuration files only when they do not already 
     "azureLocale": "en-US"
   },
   "cleanup": {
-    "provider": "basic",
+    "provider": "windowsml",
     "model": "",
+    "windowsMlModel": "qwen2.5-0.5b",
+    "onlineModel": "gpt-4o-mini",
     "localModel": "gemma3:1b",
     "localEndpoint": "http://127.0.0.1:11434/v1",
     "azureEndpoint": "",
     "style": "auto",
+    "onlineProvider": "openai",
+    "fallbackToOnline": true,
     "fallbackToBasic": true
   },
   "paste": {
@@ -486,8 +486,10 @@ The installer creates example configuration files only when they do not already 
 Allowed values:
 
 ```text
-transcription.provider = local | openai | groq | azure
+transcription.provider = windowsml | local | openai | groq | azure
+transcription.onlineProvider = none | openai | groq | azure
 cleanup.provider       = basic | ollama | openai | groq | azure-openai | none
+cleanup.onlineProvider = none | openai | groq | azure-openai
 cleanup.style          = auto | sentence | fragment
 ```
 
@@ -503,7 +505,8 @@ On startup and reload:
 
 - Reject unknown providers.
 - Reject an unparseable hotkey.
-- Verify the local model exists when local transcription or local fallback is enabled.
+- Verify the Windows ML catalog alias is present when Windows ML is selected.
+- Verify the deprecated GGML model exists only when the compatibility provider or fallback is selected.
 - Verify the required API key exists for a selected cloud provider.
 - Keep the previous valid in-memory settings if reload fails.
 - Show a tray balloon and log only the configuration error, never secret values.
@@ -522,7 +525,9 @@ Whispdows/
 │  ├─ HotkeyHook.cs
 │  ├─ HotkeyParser.cs
 │  ├─ AudioRecorder.cs
-│  ├─ Transcribers.cs
+│  ├─ WindowsMlRuntime.cs
+│  ├─ WindowsMlProviders.cs
+│  ├─ Transcribers.cs (deprecated GGML compatibility)
 │  ├─ TextCleaners.cs
 │  ├─ TextInserter.cs
 │  ├─ PillWindow.xaml
@@ -555,7 +560,8 @@ Do not split this into multiple class-library projects. One app project and one 
 | Recording is effectively silent | Show `No speech detected`, paste nothing |
 | Cloud STT key missing | Show configuration error; use local only if explicitly configured as fallback |
 | Cloud STT request fails | Use local fallback when enabled; otherwise show error |
-| Local model missing | Show exact expected model path; do not download silently |
+| Windows ML model unavailable | Use the configured online fallback when enabled; otherwise show a provider error |
+| Deprecated GGML model missing | Show the expected model path only when the compatibility provider is selected |
 | LLM cleanup fails | Run basic cleanup and paste the transcript |
 | Clipboard temporarily locked | Retry briefly |
 | Paste blocked or target elevated | Leave result on clipboard and show `Copied` |
@@ -571,21 +577,22 @@ The primary rule is: once transcription succeeds, cleanup or paste failures must
 With:
 
 ```text
-transcription.provider = local
+transcription.provider = windowsml
 cleanup.provider = basic or none
 ```
 
 - Audio remains in memory on the PC.
-- Transcription runs through local whisper.cpp.
+- Transcription runs through Windows ML and Foundry Local.
 - No audio or transcript is sent over the network.
+- The first local use downloads the selected model/runtime packages; later runs use the per-user cache.
 - No audio or transcript is saved after the operation.
 
 ### Local AI mode
 
-- Transcription can remain entirely local through whisper.cpp.
-- Cleanup sends only the transcript and fixed instructions to an HTTP(S) loopback endpoint.
-- Whispdows sends no API key, does not manage the Ollama process, and does not download a model.
-- Failure falls back to `BasicTextCleaner` when configured, so a successful transcript is preserved.
+- Transcription and cleanup can remain entirely local through Windows ML.
+- Cleanup sends only the transcript and fixed instructions to the local Windows ML runtime.
+- An online fallback sends data only after local inference fails and only to the configured provider.
+- The deprecated Ollama path remains loopback-only and user-managed.
 
 ### Cloud mode
 
@@ -610,7 +617,7 @@ The hook sees system keyboard events because Windows requires that for a global 
 
 ### Build target
 
-Target Windows 11 x64 only for version 1.
+Target Windows 11 24H2 (build 26100+) on x64 and ARM64.
 
 Publish a self-contained .NET build so the machine does not need a separately installed .NET runtime:
 
@@ -624,6 +631,7 @@ dotnet publish .\src\Whispdows\Whispdows.csproj `
 ```
 
 A folder publish is intentional. WPF, native whisper.cpp libraries, and the model are easier to package and diagnose as normal files. Inno Setup then produces one `Whispdows-Setup.exe` containing the full folder.
+A folder publish is intentional. WPF, Windows ML/ONNX Runtime native components, and compatibility assets are easier to package and diagnose as normal files. Inno Setup then produces one `Whispdows-Setup.exe` containing the full folder.
 
 ### Installer behaviour
 
@@ -631,9 +639,9 @@ Use a per-user Inno Setup installer:
 
 - Install to `%LOCALAPPDATA%\Programs\Whispdows`.
 - Require no administrator rights.
-- Detect `ollama.exe`; when it is missing, offer an unchecked task that installs the official `Ollama.Ollama` package through Windows Package Manager.
+- Detect `ollama.exe`; when it is missing, offer an unchecked task that installs the official `Ollama.Ollama` package through Windows Package Manager for the deprecated compatibility path.
 - Do not pull an Ollama model automatically, change an existing Ollama installation, or uninstall Ollama with Whispdows.
-- Include the .NET runtime, native whisper.cpp runtime, and `small.en` model.
+- Include the .NET runtime and Windows ML/ONNX Runtime components; download catalog models on first local use.
 - Add Start menu shortcuts for `Whispdows`, `README`, and `Uninstall`.
 - Optionally enable launch at login during installation.
 - Preserve `%LOCALAPPDATA%\Whispdows` settings during upgrades and uninstall unless the user explicitly chooses to remove them.
@@ -684,19 +692,19 @@ A global keyboard hook and simulated paste are legitimate requirements for this 
 
 Version 1 is complete when all of the following work:
 
-1. The app installs and starts without requiring .NET, Python, Docker, Node.js, or a separate model download.
+1. The app installs and starts without requiring .NET, Python, Docker, Node.js, or a manually managed model download.
 2. The tray menu can enable/disable dictation and toggle launch at login.
 3. Holding the configured shortcut starts microphone capture and shows the pill without stealing focus.
-4. Releasing it stops capture and runs local whisper.cpp transcription.
-5. Local/basic mode works with the network disconnected.
+4. Releasing it stops capture and runs Windows ML transcription.
+5. Windows ML/basic mode works with the network disconnected after the first model/runtime download.
 6. OpenAI, Groq, and Azure Speech transcription can each be selected in `settings.json` and read their key from the encrypted per-user secret store.
-7. Ollama, OpenAI, Groq, or Azure OpenAI cleanup can be selected independently.
-8. Local or cloud LLM cleanup failure falls back to basic cleanup.
+7. Windows ML, Ollama, OpenAI, Groq, or Azure OpenAI cleanup can be selected independently.
+8. Local or cloud AI cleanup failure follows the configured online/basic fallback.
 9. Text pastes correctly into at least Notepad, Edge/Chrome, Outlook, Teams, and VS Code when those applications are not elevated.
 10. Ordinary text clipboard contents are restored after paste.
 11. Focus changes and elevated targets leave the result safely on the clipboard.
 12. No audio, transcript, clipboard content, or API key appears in logs.
-13. Exiting the app removes the keyboard hook, releases the microphone, disposes the Whisper model, and removes the pill.
+13. Exiting the app removes the keyboard hook, releases the microphone, disposes the Windows ML runtime, and removes the pill.
 
 ## 16. Implementation order
 
@@ -717,10 +725,10 @@ Keep development in five small slices.
 - WASAPI recording
 - State machine and cancellation
 
-### Slice 3 — local end-to-end path
+### Slice 3 — Windows ML local end-to-end path
 
-- Whisper.net/whisper.cpp runtime
-- Bundled `small.en` model
+- Windows ML and Foundry Local runtime
+- Catalog aliases for transcription and cleanup
 - Basic cleaner
 - Clipboard paste and restore
 
@@ -746,7 +754,6 @@ Do not implement these pre-emptively:
 
 - Bundled llama.cpp/Ollama cleanup runtime and model
 - CUDA or Vulkan acceleration
-- Auto model downloads
 - A hotkey-capture settings UI
 - Multiple style profiles
 - Per-application behaviour
@@ -766,6 +773,9 @@ Do not implement these pre-emptively:
 - [Windows clipboard overview](https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard)
 - [Run and RunOnce startup keys](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys)
 - [Windows microphone permissions](https://support.microsoft.com/en-us/windows/privacy/turn-on-app-permissions-for-your-microphone-in-windows)
+- [Windows ML overview](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/overview)
+- [Windows ML execution providers](https://learn.microsoft.com/en-us/windows/ai/new-windows-ml/supported-execution-providers)
+- [Foundry Local Windows ML SDK](https://learn.microsoft.com/en-us/windows/ai/foundry-local/get-started)
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 - [Whisper.net](https://github.com/sandrohanea/whisper.net)
 - [OpenAI file transcription](https://developers.openai.com/api/docs/guides/speech-to-text)

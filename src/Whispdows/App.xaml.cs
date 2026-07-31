@@ -13,6 +13,7 @@ public partial class App : System.Windows.Application
     private AppSettings _settings = AppSettings.CreateDefault();
     private ProviderSecrets _secrets = ProviderSecrets.Empty;
     private IAppLogger _logger = NullAppLogger.Instance;
+    private WindowsMlRuntime? _windowsMlRuntime;
     private TrayMenu? _trayMenu;
     private PillWindow? _pillWindow;
     private SettingsWindow? _settingsWindow;
@@ -31,6 +32,8 @@ public partial class App : System.Windows.Application
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         _logger = CreateLogger();
+        _windowsMlRuntime = new WindowsMlRuntime(
+            Path.Combine(_paths.SettingsDirectory, "windowsml"));
 
         if (StartupConfiguration.IsEnableCommand(e.Args))
         {
@@ -107,6 +110,7 @@ public partial class App : System.Windows.Application
         _trayMenu?.Dispose();
         _settingsWindow?.Close();
         _pillWindow?.Close();
+        _windowsMlRuntime?.Dispose();
         _logger.Dispose();
         base.OnExit(e);
     }
@@ -460,29 +464,70 @@ public partial class App : System.Windows.Application
         ProviderSecrets secrets)
     {
         var providerName = settings.Transcription.Provider.ToLowerInvariant();
-        if (providerName == "local")
+        if (providerName == "windowsml")
         {
-            return CreateLocalTranscriber(settings.Transcription);
+            var local = CreateWindowsMlTranscriber(settings.Transcription);
+            if (!settings.Transcription.FallbackToOnline
+                || string.Equals(
+                    settings.Transcription.OnlineProvider,
+                    "none",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return local;
+            }
+
+            try
+            {
+                return new FallbackTranscriber(
+                    local,
+                    CreateOnlineTranscriber(
+                        settings.Transcription,
+                        secrets,
+                        settings.Transcription.OnlineProvider),
+                    allowMissingPrimaryConfiguration: false,
+                    allowMissingFallbackConfiguration: true);
+            }
+            catch
+            {
+                local.Dispose();
+                throw;
+            }
         }
 
-        ITranscriber cloud;
-        if (providerName == "azure")
+        if (providerName == "local")
         {
-            cloud = new AzureSpeechTranscriber(
-                secrets.Get("AZURE_SPEECH_KEY"),
-                settings.Transcription.AzureRegion,
-                settings.Transcription.AzureLocale);
+            var local = CreateLocalTranscriber(settings.Transcription);
+            if (!settings.Transcription.FallbackToOnline
+                || string.Equals(
+                    settings.Transcription.OnlineProvider,
+                    "none",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return local;
+            }
+
+            try
+            {
+                return new FallbackTranscriber(
+                    local,
+                    CreateOnlineTranscriber(
+                        settings.Transcription,
+                        secrets,
+                        settings.Transcription.OnlineProvider),
+                    allowMissingPrimaryConfiguration: false,
+                    allowMissingFallbackConfiguration: true);
+            }
+            catch
+            {
+                local.Dispose();
+                throw;
+            }
         }
-        else
-        {
-            var provider = CloudProviderDefinition.Create(providerName, secrets);
-            cloud = new OpenAiCompatibleTranscriber(
-                provider,
-                providerName == "openai"
-                    ? settings.Transcription.OpenaiModel
-                    : settings.Transcription.GroqModel,
-                settings.Transcription.Language);
-        }
+
+        var cloud = CreateOnlineTranscriber(
+            settings.Transcription,
+            secrets,
+            providerName);
 
         if (!settings.Transcription.FallbackToLocal)
         {
@@ -493,7 +538,7 @@ public partial class App : System.Windows.Application
         {
             return new FallbackTranscriber(
                 cloud,
-                CreateLocalTranscriber(settings.Transcription));
+                CreateLocalFallbackTranscriber(settings.Transcription));
         }
         catch
         {
@@ -517,19 +562,67 @@ public partial class App : System.Windows.Application
             return new NoOpTextCleaner();
         }
 
-        ITextCleaner aiCleaner = providerName switch
+        if (providerName == "windowsml")
         {
-            "azure-openai" => new AzureOpenAiTextCleaner(
-                secrets.Get("AZURE_SPEECH_KEY"),
-                settings.Cleanup.AzureEndpoint,
-                settings.Cleanup.Model),
-            "ollama" => new OllamaTextCleaner(
-                settings.Cleanup.LocalModel,
-                settings.Cleanup.LocalEndpoint),
-            _ => new LlmTextCleaner(
-                CloudProviderDefinition.Create(providerName, secrets),
-                settings.Cleanup.Model)
-        };
+            var local = new WindowsMlTextCleaner(
+                GetWindowsMlRuntime(),
+                settings.Cleanup.WindowsMlModel);
+            ITextCleaner? fallback = null;
+
+            if (settings.Cleanup.FallbackToOnline
+                && !string.Equals(
+                    settings.Cleanup.OnlineProvider,
+                    "none",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                fallback = CreateOnlineTextCleaner(
+                    settings.Cleanup,
+                    secrets,
+                    settings.Cleanup.OnlineProvider,
+                    settings.Cleanup.OnlineModel);
+            }
+
+            if (settings.Cleanup.FallbackToBasic)
+            {
+                var basic = new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant());
+                fallback = fallback is null
+                    ? basic
+                    : new FallbackTextCleaner(
+                        fallback,
+                        basic,
+                        allowMissingPrimaryConfiguration: true,
+                        allowMissingFallbackConfiguration: false);
+            }
+
+            if (fallback is null)
+            {
+                return local;
+            }
+
+            try
+            {
+                return new FallbackTextCleaner(
+                    local,
+                    fallback,
+                    allowMissingPrimaryConfiguration: false,
+                    allowMissingFallbackConfiguration: false);
+            }
+            catch
+            {
+                local.Dispose();
+                if (fallback is IDisposable disposable)
+                {
+                    disposable.Dispose();
+                }
+
+                throw;
+            }
+        }
+
+        ITextCleaner aiCleaner = CreateOnlineTextCleaner(
+            settings.Cleanup,
+            secrets,
+            providerName);
         if (!settings.Cleanup.FallbackToBasic)
         {
             return aiCleaner;
@@ -552,12 +645,82 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private ITranscriber CreateOnlineTranscriber(
+        TranscriptionSettings settings,
+        ProviderSecrets secrets,
+        string providerName)
+    {
+        providerName = providerName.ToLowerInvariant();
+        if (providerName == "azure")
+        {
+            return new AzureSpeechTranscriber(
+                secrets.Get("AZURE_SPEECH_KEY"),
+                settings.AzureRegion,
+                settings.AzureLocale);
+        }
+
+        var provider = CloudProviderDefinition.Create(providerName, secrets);
+        return new OpenAiCompatibleTranscriber(
+            provider,
+            providerName == "openai"
+                ? settings.OpenaiModel
+                : settings.GroqModel,
+            settings.Language);
+    }
+
+    private ITextCleaner CreateOnlineTextCleaner(
+        CleanupSettings settings,
+        ProviderSecrets secrets,
+        string providerName,
+        string? modelOverride = null)
+    {
+        providerName = providerName.ToLowerInvariant();
+        var model = modelOverride ?? settings.Model;
+        return providerName switch
+        {
+            "azure-openai" => new AzureOpenAiTextCleaner(
+                secrets.Get("AZURE_SPEECH_KEY"),
+                settings.AzureEndpoint,
+                model),
+            "ollama" => new OllamaTextCleaner(
+                settings.LocalModel,
+                settings.LocalEndpoint),
+            _ => new LlmTextCleaner(
+                CloudProviderDefinition.Create(providerName, secrets),
+                model)
+        };
+    }
+
     private ITranscriber CreateLocalTranscriber(TranscriptionSettings settings)
     {
         return new WhisperCppTranscriber(
             ResolveApplicationPath(settings.LocalModelPath),
             settings.Language,
             settings.LocalThreads);
+    }
+
+    private ITranscriber CreateWindowsMlTranscriber(TranscriptionSettings settings)
+    {
+        return new WindowsMlTranscriber(
+            GetWindowsMlRuntime(),
+            settings.WindowsMlModel,
+            settings.Language);
+    }
+
+    private ITranscriber CreateLocalFallbackTranscriber(TranscriptionSettings settings)
+    {
+        return new FallbackTranscriber(
+            CreateWindowsMlTranscriber(settings),
+            CreateLocalTranscriber(settings),
+            allowMissingPrimaryConfiguration: false,
+            allowMissingFallbackConfiguration: false);
+    }
+
+    private WindowsMlRuntime GetWindowsMlRuntime()
+    {
+        return _windowsMlRuntime
+            ?? throw new InvalidOperationException(
+                "The Windows ML runtime has not been initialized.");
     }
 
     private string ResolveApplicationPath(string configuredPath)
