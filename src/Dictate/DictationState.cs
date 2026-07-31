@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace Dictate;
 
 public enum DictationState
@@ -32,7 +34,9 @@ public sealed class DictationController : IDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private AudioSettings _audioSettings;
+    private DictationPipeline _pipeline;
     private CancellationTokenSource? _maximumDuration;
+    private nint _targetWindow;
     private int _sessionIdentifier;
     private bool _enabled;
     private bool _disposed;
@@ -41,16 +45,20 @@ public sealed class DictationController : IDisposable
         IAudioRecorder audioRecorder,
         IRecordingPill pill,
         Func<nint> getForegroundWindow,
-        AudioSettings audioSettings)
+        AudioSettings audioSettings,
+        DictationPipeline pipeline)
     {
         _audioRecorder = audioRecorder;
         _pill = pill;
         _getForegroundWindow = getForegroundWindow;
         _audioSettings = CopyAudioSettings(audioSettings);
+        _pipeline = pipeline;
         State = DictationState.Disabled;
     }
 
     public event Action<DictationState>? StateChanged;
+
+    public event Action<string>? ErrorOccurred;
 
     public DictationState State { get; private set; }
 
@@ -98,6 +106,26 @@ public sealed class DictationController : IDisposable
         _audioSettings = CopyAudioSettings(settings);
     }
 
+    public void UpdatePipeline(DictationPipeline pipeline)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(pipeline);
+        if (State != DictationState.Disabled)
+        {
+            throw new InvalidOperationException("The dictation pipeline can only be replaced while disabled.");
+        }
+
+        var previous = _pipeline;
+        _pipeline = pipeline;
+        previous.Dispose();
+    }
+
+    public void ValidateConfiguration()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _pipeline.Transcriber.ValidateConfiguration();
+    }
+
     public async Task HandleHotkeyEventAsync(HotkeyEvent hotkeyEvent)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -142,6 +170,7 @@ public sealed class DictationController : IDisposable
         _shutdown.Cancel();
         CancelMaximumDuration();
         _audioRecorder.Dispose();
+        _pipeline.Dispose();
         _pill.HidePill();
         _shutdown.Dispose();
     }
@@ -154,14 +183,14 @@ public sealed class DictationController : IDisposable
         }
 
         var sessionIdentifier = ++_sessionIdentifier;
-        var targetWindow = _getForegroundWindow();
+        _targetWindow = _getForegroundWindow();
 
         try
         {
             _audioRecorder.Start(_audioSettings);
             TransitionTo(DictationState.Recording);
             _pill.SetState(PillState.Listening);
-            _pill.ShowForTargetWindow(targetWindow);
+            _pill.ShowForTargetWindow(_targetWindow);
 
             _maximumDuration = new CancellationTokenSource();
             _ = StopAtMaximumDurationAsync(
@@ -169,7 +198,7 @@ public sealed class DictationController : IDisposable
                 TimeSpan.FromSeconds(_audioSettings.MaxSeconds),
                 _maximumDuration.Token);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             if (_audioRecorder.IsRecording)
             {
@@ -183,7 +212,7 @@ public sealed class DictationController : IDisposable
                 }
             }
 
-            EnterErrorLocked("Microphone unavailable", sessionIdentifier);
+            EnterErrorLocked("Microphone unavailable", sessionIdentifier, exception.Message);
         }
     }
 
@@ -204,8 +233,43 @@ public sealed class DictationController : IDisposable
             using var recording = await _audioRecorder.StopAsync(_shutdown.Token);
             if (recording.Duration < MinimumRecordingDuration)
             {
-                _pill.SetState(PillState.NoSpeechDetected);
+                CompleteWithoutSpeechLocked(sessionIdentifier);
+                return;
             }
+
+            using var audioStream = new MemoryStream(recording.WavBytes, writable: false);
+            var transcript = await _pipeline.Transcriber.TranscribeAsync(
+                audioStream,
+                _shutdown.Token);
+            if (string.IsNullOrWhiteSpace(transcript))
+            {
+                CompleteWithoutSpeechLocked(sessionIdentifier);
+                return;
+            }
+
+            TransitionTo(DictationState.Cleaning);
+            _pill.SetState(PillState.Cleaning);
+            var cleanedText = await _pipeline.TextCleaner.CleanAsync(
+                transcript,
+                _shutdown.Token);
+            if (string.IsNullOrWhiteSpace(cleanedText))
+            {
+                CompleteWithoutSpeechLocked(sessionIdentifier);
+                return;
+            }
+
+            TransitionTo(DictationState.Pasting);
+            var insertionResult = await _pipeline.TextInserter.InsertAsync(
+                cleanedText,
+                _targetWindow,
+                _shutdown.Token);
+            _pill.SetState(insertionResult switch
+            {
+                TextInsertionResult.Pasted => PillState.Pasted,
+                TextInsertionResult.Copied => PillState.Copied,
+                TextInsertionResult.TargetChanged => PillState.CopiedTargetChanged,
+                _ => throw new ArgumentOutOfRangeException()
+            });
 
             TransitionTo(_enabled ? DictationState.Idle : DictationState.Disabled);
             SchedulePillHide(sessionIdentifier, ResultDisplayDuration);
@@ -215,9 +279,16 @@ public sealed class DictationController : IDisposable
             TransitionTo(DictationState.Disabled);
             _pill.HidePill();
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            EnterErrorLocked("Microphone unavailable", sessionIdentifier);
+            var shortMessage = exception switch
+            {
+                AudioRecorderException => "Microphone unavailable",
+                LocalModelNotFoundException => "Model missing",
+                _ when State == DictationState.Pasting => "Paste failed",
+                _ => "Transcription failed"
+            };
+            EnterErrorLocked(shortMessage, sessionIdentifier, exception.Message);
         }
     }
 
@@ -270,11 +341,22 @@ public sealed class DictationController : IDisposable
         }
     }
 
-    private void EnterErrorLocked(string message, int sessionIdentifier)
+    private void CompleteWithoutSpeechLocked(int sessionIdentifier)
+    {
+        _pill.SetState(PillState.NoSpeechDetected);
+        TransitionTo(_enabled ? DictationState.Idle : DictationState.Disabled);
+        SchedulePillHide(sessionIdentifier, ResultDisplayDuration);
+    }
+
+    private void EnterErrorLocked(
+        string message,
+        int sessionIdentifier,
+        string? detail = null)
     {
         CancelMaximumDuration();
         TransitionTo(DictationState.Error);
         _pill.SetState(PillState.Error, message);
+        ErrorOccurred?.Invoke(detail ?? message);
         ScheduleErrorReset(sessionIdentifier);
     }
 

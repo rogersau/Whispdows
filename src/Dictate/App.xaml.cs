@@ -36,8 +36,10 @@ public partial class App : System.Windows.Application
                 new AudioRecorder(),
                 _pillWindow,
                 NativeWindow.GetForegroundWindow,
-                _settings.Audio);
+                _settings.Audio,
+                CreatePipeline(_settings));
             _controller.StateChanged += ControllerOnStateChanged;
+            _controller.ErrorOccurred += ControllerOnError;
 
             _hotkeyHook = new HotkeyHook(Dispatcher, HandleHotkeyEvent);
             _trayMenu = new TrayMenu(
@@ -72,6 +74,7 @@ public partial class App : System.Windows.Application
         if (_controller is not null)
         {
             _controller.StateChanged -= ControllerOnStateChanged;
+            _controller.ErrorOccurred -= ControllerOnError;
             _controller.Dispose();
         }
 
@@ -175,13 +178,19 @@ public partial class App : System.Windows.Application
 
         var previousSettings = _settings;
         var previousRegistration = _startupRegistration.IsEnabled;
+        DictationPipeline? candidatePipeline = null;
+        var pipelineReplaced = false;
 
         try
         {
             var loaded = _settingsLoader.LoadOrCreate();
+            candidatePipeline = CreatePipeline(loaded);
             await ApplyRuntimeEnabledAsync(false, previousSettings);
             _startupRegistration.SetEnabled(loaded.LaunchAtLogin);
             _controller.UpdateAudioSettings(loaded.Audio);
+            _controller.UpdatePipeline(candidatePipeline);
+            candidatePipeline = null;
+            pipelineReplaced = true;
 
             if (loaded.Enabled)
             {
@@ -194,10 +203,17 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            candidatePipeline?.Dispose();
             try
             {
+                await ApplyRuntimeEnabledAsync(false, previousSettings);
                 _startupRegistration.SetEnabled(previousRegistration);
                 _controller.UpdateAudioSettings(previousSettings.Audio);
+                if (pipelineReplaced)
+                {
+                    _controller.UpdatePipeline(CreatePipeline(previousSettings));
+                }
+
                 await ApplyRuntimeEnabledAsync(previousSettings.Enabled, previousSettings);
             }
             catch
@@ -225,6 +241,7 @@ public partial class App : System.Windows.Application
 
         var shortcut = HotkeyParser.Parse(settings.Hotkey.Shortcut);
         _controller.UpdateAudioSettings(settings.Audio);
+        _controller.ValidateConfiguration();
         _controller.Enable();
 
         try
@@ -276,6 +293,53 @@ public partial class App : System.Windows.Application
     private void ControllerOnStateChanged(DictationState state)
     {
         _hotkeyHook?.SetRecordingActive(state == DictationState.Recording);
+    }
+
+    private void ControllerOnError(string message)
+    {
+        _trayMenu?.ShowError(message);
+    }
+
+    private DictationPipeline CreatePipeline(AppSettings settings)
+    {
+        ITranscriber transcriber = settings.Transcription.Provider switch
+        {
+            "local" => new WhisperCppTranscriber(
+                ResolveApplicationPath(settings.Transcription.LocalModelPath),
+                settings.Transcription.Language,
+                settings.Transcription.LocalThreads),
+            _ => throw new InvalidOperationException(
+                $"Transcription provider '{settings.Transcription.Provider}' is not available in this build.")
+        };
+
+        try
+        {
+            ITextCleaner cleaner = settings.Cleanup.Provider switch
+            {
+                "basic" => new BasicTextCleaner(settings.Cleanup.Style),
+                "none" => new NoOpTextCleaner(),
+                _ => throw new InvalidOperationException(
+                    $"Cleanup provider '{settings.Cleanup.Provider}' is not available in this build.")
+            };
+            return new DictationPipeline(
+                transcriber,
+                cleaner,
+                new TextInserter(settings.Paste));
+        }
+        catch
+        {
+            transcriber.Dispose();
+            throw;
+        }
+    }
+
+    private string ResolveApplicationPath(string configuredPath)
+    {
+        return Path.IsPathRooted(configuredPath)
+            ? Path.GetFullPath(configuredPath)
+            : Path.GetFullPath(Path.Combine(
+                _paths.ApplicationDirectory,
+                configuredPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
     private void OpenSettingsFolder()

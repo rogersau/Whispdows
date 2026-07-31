@@ -33,6 +33,11 @@ public sealed class DictationControllerTests
         Assert.Equal(DictationState.Idle, fixture.Controller.State);
         Assert.Equal(1, fixture.Recorder.StopCount);
         Assert.Contains(PillState.Transcribing, fixture.Pill.States);
+        Assert.Contains(PillState.Cleaning, fixture.Pill.States);
+        Assert.Contains(PillState.Pasted, fixture.Pill.States);
+        Assert.Equal(1, fixture.Transcriber.CallCount);
+        Assert.Equal(1, fixture.Cleaner.CallCount);
+        Assert.Equal(1, fixture.Inserter.CallCount);
         Assert.NotNull(fixture.Recorder.LastRecording);
         Assert.Throws<ObjectDisposedException>(() => fixture.Recorder.LastRecording!.WavBytes);
     }
@@ -110,12 +115,30 @@ public sealed class DictationControllerTests
         Assert.Equal(DictationState.Idle, fixture.Controller.State);
     }
 
+    [Fact]
+    public async Task Short_recording_is_discarded_before_transcription()
+    {
+        using var fixture = new ControllerFixture();
+        fixture.Recorder.NextDuration = TimeSpan.FromMilliseconds(100);
+        fixture.Controller.Enable();
+        await fixture.Controller.HandleHotkeyEventAsync(HotkeyEvent.TriggerPressed);
+
+        await fixture.Controller.HandleHotkeyEventAsync(HotkeyEvent.TriggerReleased);
+
+        Assert.Equal(0, fixture.Transcriber.CallCount);
+        Assert.Equal(0, fixture.Inserter.CallCount);
+        Assert.Contains(PillState.NoSpeechDetected, fixture.Pill.States);
+    }
+
     private sealed class ControllerFixture : IDisposable
     {
         public ControllerFixture()
         {
             Recorder = new FakeAudioRecorder();
             Pill = new FakeRecordingPill();
+            Transcriber = new FakeTranscriber();
+            Cleaner = new FakeTextCleaner();
+            Inserter = new FakeTextInserter();
             Controller = new DictationController(
                 Recorder,
                 Pill,
@@ -124,12 +147,19 @@ public sealed class DictationControllerTests
                 {
                     DeviceId = "default",
                     MaxSeconds = 3600
-                });
+                },
+                new DictationPipeline(Transcriber, Cleaner, Inserter));
         }
 
         public FakeAudioRecorder Recorder { get; }
 
         public FakeRecordingPill Pill { get; }
+
+        public FakeTranscriber Transcriber { get; }
+
+        public FakeTextCleaner Cleaner { get; }
+
+        public FakeTextInserter Inserter { get; }
 
         public DictationController Controller { get; }
 
@@ -154,6 +184,8 @@ public sealed class DictationControllerTests
         public bool ThrowOnStart { get; set; }
 
         public bool DelayStop { get; set; }
+
+        public TimeSpan NextDuration { get; set; } = TimeSpan.FromSeconds(1);
 
         private TaskCompletionSource<bool> StopCompletion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -180,7 +212,7 @@ public sealed class DictationControllerTests
                 await StopCompletion.Task.WaitAsync(cancellationToken);
             }
 
-            LastRecording = new RecordedAudio([1, 2, 3, 4], TimeSpan.FromSeconds(1));
+            LastRecording = new RecordedAudio([1, 2, 3, 4], NextDuration);
             return LastRecording;
         }
 
@@ -199,6 +231,56 @@ public sealed class DictationControllerTests
         public void CompleteStop()
         {
             StopCompletion.TrySetResult(true);
+        }
+    }
+
+    private sealed class FakeTranscriber : ITranscriber
+    {
+        public int CallCount { get; private set; }
+
+        public void ValidateConfiguration()
+        {
+        }
+
+        public Task<string> TranscribeAsync(
+            Stream wavAudio,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult("raw transcript");
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FakeTextCleaner : ITextCleaner
+    {
+        public int CallCount { get; private set; }
+
+        public Task<string> CleanAsync(
+            string transcript,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.FromResult("Clean transcript.");
+        }
+    }
+
+    private sealed class FakeTextInserter : ITextInserter
+    {
+        public int CallCount { get; private set; }
+
+        public Task<TextInsertionResult> InsertAsync(
+            string text,
+            nint targetWindow,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            Assert.Equal("Clean transcript.", text);
+            Assert.Equal(new IntPtr(1234), targetWindow);
+            return Task.FromResult(TextInsertionResult.Pasted);
         }
     }
 

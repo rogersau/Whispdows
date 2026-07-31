@@ -12,6 +12,7 @@ public enum PillState
     Cleaning,
     Pasted,
     Copied,
+    CopiedTargetChanged,
     NoSpeechDetected,
     Error
 }
@@ -47,6 +48,7 @@ public partial class PillWindow : Window, IRecordingPill
             PillState.Cleaning => new PillVisual("◌", "Cleaning…", "#FFF2C14E"),
             PillState.Pasted => new PillVisual("✓", "Pasted", "#FF71D7A5"),
             PillState.Copied => new PillVisual("✓", "Copied", "#FFF2C14E"),
+            PillState.CopiedTargetChanged => new PillVisual("✓", "Copied — target changed", "#FFF2C14E"),
             PillState.NoSpeechDetected => new PillVisual("–", "No speech detected", "#FFF2C14E"),
             PillState.Error => new PillVisual("!", string.IsNullOrWhiteSpace(errorMessage) ? "Error" : errorMessage, "#FFFF8A80"),
             _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown pill state.")
