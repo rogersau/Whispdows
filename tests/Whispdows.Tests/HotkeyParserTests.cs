@@ -25,6 +25,15 @@ public sealed class HotkeyParserTests
         Assert.Equal(VirtualKey.Space, shortcut.TriggerKey);
     }
 
+    [Fact]
+    public void Parses_a_windows_key_as_a_single_trigger()
+    {
+        var shortcut = HotkeyParser.Parse("LeftWin");
+
+        Assert.Equal(HotkeyModifiers.None, shortcut.Modifiers);
+        Assert.Equal(VirtualKey.LeftWindows, shortcut.TriggerKey);
+    }
+
     [Theory]
     [InlineData("F13", VirtualKey.F13)]
     [InlineData("a", (VirtualKey)0x41)]

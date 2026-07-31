@@ -113,7 +113,11 @@ public static class HotkeyParser
             ["leftalt"] = VirtualKey.LeftAlt,
             ["lalt"] = VirtualKey.LeftAlt,
             ["rightalt"] = VirtualKey.RightAlt,
-            ["ralt"] = VirtualKey.RightAlt
+            ["ralt"] = VirtualKey.RightAlt,
+            ["leftwin"] = VirtualKey.LeftWindows,
+            ["lwin"] = VirtualKey.LeftWindows,
+            ["rightwin"] = VirtualKey.RightWindows,
+            ["rwin"] = VirtualKey.RightWindows
         };
 
     public static HotkeyShortcut Parse(string shortcut)

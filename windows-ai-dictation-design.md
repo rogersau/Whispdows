@@ -54,7 +54,7 @@ The application must:
 - Paste into the application that was active when dictation began.
 - Restore the previous clipboard after pasting where possible.
 - Offer an on/off toggle and launch-at-login toggle in the Windows notification area.
-- Store settings locally in readable files.
+- Store non-secret settings locally in readable files and protect API keys with per-user encryption.
 - Send no telemetry and retain no audio or transcript history.
 - Be installable with one standalone setup executable.
 
@@ -71,7 +71,6 @@ Do not build these in version 1:
 - Transcript history
 - Audio history
 - Automatic updates
-- A full graphical settings application
 - App-specific integrations for Teams, Outlook, browsers, or editors
 - Reading surrounding text from the focused application
 - Code-specific dictation commands
@@ -164,7 +163,7 @@ flowchart LR
     Controller --> Inserter[TextInserter]
     Inserter --> Clipboard[Clipboard snapshot/set/restore]
     Inserter --> SendInput[Simulated Ctrl+V]
-    Settings[settings.json + .env] --> Controller
+    Settings[settings.json + secrets.dat] --> Controller
 ```
 
 ### Single orchestration class
@@ -230,9 +229,9 @@ Behaviour:
 
 - `Enabled` installs or removes the keyboard hook.
 - `Launch at login` writes or removes a per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value.
-- `Reload settings` validates and reloads `settings.json` and `.env` without restarting.
+- `Reload settings` validates and reloads `settings.json` and the encrypted `secrets.dat` without restarting.
 - `Open settings folder` opens `%LOCALAPPDATA%\Whispdows`.
-- No graphical settings window is required.
+- `Settings…` opens the graphical editor for the hotkey, audio device, providers, paste behavior, and encrypted API keys.
 
 ### 8.2 Audio recorder
 
@@ -428,7 +427,7 @@ Application:
 
 User settings and secrets:
 %LOCALAPPDATA%\Whispdows\settings.json
-%LOCALAPPDATA%\Whispdows\.env
+%LOCALAPPDATA%\Whispdows\secrets.dat
 
 Logs:
 %LOCALAPPDATA%\Whispdows\logs\
@@ -484,15 +483,12 @@ cleanup.style          = auto | sentence | fragment
 
 `localThreads = 0` means choose a sensible value from available logical processors, capped so the app does not consume every core.
 
-### `.env`
+### `secrets.dat`
 
-```dotenv
-OPENAI_API_KEY=
-GROQ_API_KEY=
-AZURE_SPEECH_KEY=
-```
-
-The `.env` file is intentionally simple and is not committed to source control. It is plain text, readable by the Windows user account. Do not add DPAPI or a credential vault unless this becomes a multi-user or distributed product.
+The settings editor accepts OpenAI, Groq, and Azure keys through masked password
+fields. The store is encrypted with Windows DPAPI using the current user scope;
+keys are never written to `settings.json` or logs. Existing `.env` files are
+supported only as a one-time migration source and are cleared after import.
 
 ### Validation
 
@@ -677,7 +673,7 @@ Version 1 is complete when all of the following work:
 3. Holding the configured shortcut starts microphone capture and shows the pill without stealing focus.
 4. Releasing it stops capture and runs local whisper.cpp transcription.
 5. Local/basic mode works with the network disconnected.
-6. OpenAI, Groq, and Azure Speech transcription can each be selected in `settings.json` and read their key from `.env`.
+6. OpenAI, Groq, and Azure Speech transcription can each be selected in `settings.json` and read their key from the encrypted per-user secret store.
 7. OpenAI or Groq LLM cleanup can be selected independently.
 8. LLM cleanup failure falls back to basic cleanup.
 9. Text pastes correctly into at least Notepad, Edge/Chrome, Outlook, Teams, and VS Code when those applications are not elevated.
@@ -718,7 +714,7 @@ At this point the application is already useful and fully offline.
 
 - OpenAI-compatible and Azure Speech transcription clients
 - OpenAI/Groq LLM cleaner
-- `.env` loading
+- DPAPI secret storage and one-time `.env` migration
 - Timeouts and fallbacks
 
 ### Slice 5 — release
@@ -735,7 +731,6 @@ Do not implement these pre-emptively:
 - Local llama.cpp cleanup
 - CUDA or Vulkan acceleration
 - Auto model downloads
-- A hotkey-capture settings UI
 - Multiple style profiles
 - Per-application behaviour
 - Voice activity detection before transcription

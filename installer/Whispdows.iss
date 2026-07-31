@@ -38,7 +38,6 @@ Name: "{localappdata}\Whispdows"; Flags: uninsneveruninstall
 [Files]
 Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#PublishDir}\settings.example.json"; DestDir: "{localappdata}\Whispdows"; DestName: "settings.json"; Flags: onlyifdoesntexist uninsneveruninstall
-Source: "{#PublishDir}\.env.example"; DestDir: "{localappdata}\Whispdows"; DestName: ".env"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Icons]
 Name: "{group}\Whispdows"; Filename: "{app}\{#MyAppExeName}"

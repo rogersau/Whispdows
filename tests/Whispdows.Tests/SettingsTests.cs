@@ -156,6 +156,7 @@ public sealed class SettingsTests
 
         Assert.NotEqual(sandbox.Paths.SettingsDirectory, sandbox.Paths.ApplicationDirectory);
         Assert.EndsWith(Path.Combine("user", "Whispdows", "settings.json"), sandbox.Paths.SettingsFile);
+        Assert.EndsWith(Path.Combine("user", "Whispdows", "secrets.dat"), sandbox.Paths.SecretsFile);
         Assert.EndsWith(Path.Combine("user", "Whispdows", "logs"), sandbox.Paths.LogDirectory);
         Assert.EndsWith(Path.Combine("application", "README.md"), sandbox.Paths.ReadmePath);
     }

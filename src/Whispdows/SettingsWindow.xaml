@@ -11,12 +11,22 @@
         ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="True"
         UseLayoutRounding="True"
+        PreviewKeyDown="Window_OnPreviewKeyDown"
+        PreviewKeyUp="Window_OnPreviewKeyUp"
         WindowStartupLocation="CenterScreen">
     <Window.Resources>
         <Style TargetType="TextBlock">
             <Setter Property="Foreground" Value="#ECF2FF" />
         </Style>
         <Style TargetType="TextBox">
+            <Setter Property="Margin" Value="0,4,0,0" />
+            <Setter Property="Padding" Value="10,7" />
+            <Setter Property="Background" Value="#171C27" />
+            <Setter Property="BorderBrush" Value="#35425A" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#ECF2FF" />
+        </Style>
+        <Style TargetType="PasswordBox">
             <Setter Property="Margin" Value="0,4,0,0" />
             <Setter Property="Padding" Value="10,7" />
             <Setter Property="Background" Value="#171C27" />
@@ -187,6 +197,7 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="170" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -196,23 +207,29 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <TextBlock VerticalAlignment="Center" Text="Shortcut" />
-                        <TextBox x:Name="ShortcutBox" Grid.Column="1" />
+                        <TextBox x:Name="ShortcutBox"
+                                 Grid.Column="1"
+                                 IsReadOnly="True" />
+                        <Button x:Name="RecordHotkeyButton"
+                                Grid.Column="2"
+                                Click="RecordHotkeyButton_OnClick"
+                                Content="Record hotkey" />
                         <TextBlock Grid.Row="1"
-                                   Grid.ColumnSpan="2"
+                                   Grid.ColumnSpan="3"
                                    Margin="0,4,0,0"
                                    Foreground="#8997B0"
-                                   Text="Examples: RightCtrl, Ctrl+Win+Space, F13" />
+                                   Text="Click Record hotkey, then press the key or combination you want. Escape cancels." />
                         <CheckBox x:Name="SuppressBox"
                                   Grid.Row="2"
-                                  Grid.ColumnSpan="2"
+                                  Grid.ColumnSpan="3"
                                   Content="Suppress the shortcut while dictation is active" />
                         <CheckBox x:Name="EnabledBox"
                                   Grid.Row="3"
-                                  Grid.ColumnSpan="2"
+                                  Grid.ColumnSpan="3"
                                   Content="Enable dictation after applying settings" />
                         <CheckBox x:Name="LaunchAtLoginBox"
                                   Grid.Row="4"
-                                  Grid.ColumnSpan="2"
+                                  Grid.ColumnSpan="3"
                                   Content="Launch Whispdows when I sign in" />
                     </Grid>
                 </GroupBox>
@@ -228,7 +245,7 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <TextBlock VerticalAlignment="Center" Text="Device" />
-                        <TextBox x:Name="DeviceIdBox" Grid.Column="1" />
+                        <ComboBox x:Name="AudioDeviceBox" Grid.Column="1" />
                         <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Maximum seconds" />
                         <TextBox x:Name="MaxSecondsBox" Grid.Row="1" Grid.Column="1" />
                     </Grid>
@@ -342,6 +359,62 @@
                     </StackPanel>
                 </GroupBox>
 
+                <GroupBox Header="API keys">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock VerticalAlignment="Center" Text="OpenAI" />
+                        <StackPanel Grid.Column="1">
+                            <DockPanel>
+                                <CheckBox x:Name="ClearOpenAiApiKeyBox"
+                                          DockPanel.Dock="Right"
+                                          Content="Clear key" />
+                                <PasswordBox x:Name="OpenAiApiKeyBox" />
+                            </DockPanel>
+                            <TextBlock x:Name="OpenAiApiKeyStatus"
+                                       Margin="0,3,0,0"
+                                       Foreground="#8997B0" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Groq" />
+                        <StackPanel Grid.Row="1" Grid.Column="1">
+                            <DockPanel>
+                                <CheckBox x:Name="ClearGroqApiKeyBox"
+                                          DockPanel.Dock="Right"
+                                          Content="Clear key" />
+                                <PasswordBox x:Name="GroqApiKeyBox" />
+                            </DockPanel>
+                            <TextBlock x:Name="GroqApiKeyStatus"
+                                       Margin="0,3,0,0"
+                                       Foreground="#8997B0" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Azure" />
+                        <StackPanel Grid.Row="2" Grid.Column="1">
+                            <DockPanel>
+                                <CheckBox x:Name="ClearAzureApiKeyBox"
+                                          DockPanel.Dock="Right"
+                                          Content="Clear key" />
+                                <PasswordBox x:Name="AzureApiKeyBox" />
+                            </DockPanel>
+                            <TextBlock x:Name="AzureApiKeyStatus"
+                                       Margin="0,3,0,0"
+                                       Foreground="#8997B0" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="3"
+                                   Grid.ColumnSpan="2"
+                                   Margin="0,10,0,0"
+                                   Foreground="#8997B0"
+                                   Text="Keys are encrypted with Windows DPAPI for this user. Leave a field blank to keep its current key." />
+                    </Grid>
+                </GroupBox>
+
                 <GroupBox Header="Cleanup">
                     <StackPanel>
                         <Grid>
@@ -407,9 +480,6 @@
 
                         <CheckBox x:Name="FallbackBasicBox"
                                   Content="Fall back to basic cleanup if the cloud cleanup fails" />
-                        <TextBlock Margin="0,10,0,0"
-                                   Foreground="#8997B0"
-                                   Text="API keys stay in .env and are never shown or saved by this window." />
                     </StackPanel>
                 </GroupBox>
 
