@@ -54,6 +54,27 @@ public sealed class ReleaseContractTests
         Assert.Contains("SmartScreen", readme);
     }
 
+    [Fact]
+    public void Application_and_tray_icons_are_packaged_as_project_assets()
+    {
+        var project = File.ReadAllText(
+            RepositoryFile("src", "Dictate", "Dictate.csproj"));
+        var trayMenu = File.ReadAllText(
+            RepositoryFile("src", "Dictate", "TrayMenu.cs"));
+
+        Assert.Contains(
+            "<ApplicationIcon>Assets\\dictate.ico</ApplicationIcon>",
+            project);
+        Assert.DoesNotContain("SystemIcons.Application", trayMenu);
+
+        var resources = typeof(TrayMenu).Assembly.GetManifestResourceNames();
+        Assert.Contains("Dictate.Assets.dictate-tray-enabled.ico", resources);
+        Assert.Contains("Dictate.Assets.dictate-tray-disabled.ico", resources);
+        Assert.Contains("Dictate.Assets.dictate-tray-listening.ico", resources);
+        Assert.Contains("Dictate.Assets.dictate-tray-processing.ico", resources);
+        Assert.Contains("Dictate.Assets.dictate-tray-error.ico", resources);
+    }
+
     private static string RepositoryFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

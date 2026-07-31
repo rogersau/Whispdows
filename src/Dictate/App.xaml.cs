@@ -352,6 +352,7 @@ public partial class App : System.Windows.Application
     private void ControllerOnStateChanged(DictationState state)
     {
         _hotkeyHook?.SetRecordingActive(state == DictationState.Recording);
+        _trayMenu?.SetState(state);
     }
 
     private void ControllerOnError(string message)

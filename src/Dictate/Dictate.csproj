@@ -9,6 +9,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Dictate</RootNamespace>
     <AssemblyName>Dictate</AssemblyName>
+    <ApplicationIcon>Assets\dictate.ico</ApplicationIcon>
     <Version>0.1.0</Version>
     <PlatformTarget>x64</PlatformTarget>
     <Platforms>x64</Platforms>
@@ -18,6 +19,14 @@
     <PackageReference Include="NAudio.Wasapi" Version="2.3.0" />
     <PackageReference Include="Whisper.net" Version="1.9.1" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\dictate-tray-enabled.ico" />
+    <EmbeddedResource Include="Assets\dictate-tray-disabled.ico" />
+    <EmbeddedResource Include="Assets\dictate-tray-listening.ico" />
+    <EmbeddedResource Include="Assets\dictate-tray-processing.ico" />
+    <EmbeddedResource Include="Assets\dictate-tray-error.ico" />
   </ItemGroup>
 
   <ItemGroup>

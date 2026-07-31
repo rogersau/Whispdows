@@ -3,6 +3,7 @@
 **/obj/
 .vs/
 artifacts/
+tmp/
 
 # User-specific files
 *.user
