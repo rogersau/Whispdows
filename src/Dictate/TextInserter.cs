@@ -280,6 +280,8 @@ public sealed class WindowsInputSender : IInputSender
         };
     }
 
+    internal static int NativeInputSize => Marshal.SizeOf<NativeInput>();
+
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeInput
     {
@@ -291,7 +293,24 @@ public sealed class WindowsInputSender : IInputSender
     private struct InputUnion
     {
         [FieldOffset(0)]
+        public MouseInput Mouse;
+
+        [FieldOffset(0)]
         public KeyboardInput Keyboard;
+
+        [FieldOffset(0)]
+        public HardwareInput Hardware;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInput
+    {
+        public int X;
+        public int Y;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -302,6 +321,14 @@ public sealed class WindowsInputSender : IInputSender
         public uint Flags;
         public uint Time;
         public IntPtr ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HardwareInput
+    {
+        public uint Message;
+        public ushort ParameterLow;
+        public ushort ParameterHigh;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

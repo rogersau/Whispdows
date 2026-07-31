@@ -265,7 +265,7 @@ public sealed class DictationController : IDisposable
                     transcribeTimer.Elapsed);
             }
 
-            if (string.IsNullOrWhiteSpace(transcript))
+            if (IsNoSpeechTranscript(transcript))
             {
                 CompleteWithoutSpeechLocked(sessionIdentifier);
                 return;
@@ -398,6 +398,15 @@ public sealed class DictationController : IDisposable
         _pill.SetState(PillState.NoSpeechDetected);
         TransitionTo(_enabled ? DictationState.Idle : DictationState.Disabled);
         SchedulePillHide(sessionIdentifier, ResultDisplayDuration);
+    }
+
+    private static bool IsNoSpeechTranscript(string transcript)
+    {
+        return string.IsNullOrWhiteSpace(transcript)
+            || string.Equals(
+                transcript.Trim(),
+                "[BLANK_AUDIO]",
+                StringComparison.OrdinalIgnoreCase);
     }
 
     private void EnterErrorLocked(

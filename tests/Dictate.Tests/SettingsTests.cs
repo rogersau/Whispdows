@@ -77,6 +77,29 @@ public sealed class SettingsTests
     }
 
     [Fact]
+    public void Save_requires_an_endpoint_for_azure_openai_cleanup()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Cleanup.Provider = "azure-openai";
+        settings.Cleanup.Model = "gpt-5.4-nano";
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("cleanup.azureEndpoint", exception.Message);
+
+        settings.Cleanup.AzureEndpoint =
+            "https://resource.services.ai.azure.com/openai/v1";
+        sandbox.Loader.Save(settings);
+
+        var loaded = sandbox.Loader.LoadOrCreate();
+        Assert.Equal("azure-openai", loaded.Cleanup.Provider);
+        Assert.Equal("gpt-5.4-nano", loaded.Cleanup.Model);
+        Assert.Equal(settings.Cleanup.AzureEndpoint, loaded.Cleanup.AzureEndpoint);
+    }
+
+    [Fact]
     public void Save_requires_a_region_and_locale_for_azure_speech()
     {
         using var sandbox = new TestSandbox();

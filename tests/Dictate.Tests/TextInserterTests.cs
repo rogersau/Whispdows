@@ -6,6 +6,14 @@ namespace Dictate.Tests;
 public sealed class TextInserterTests
 {
     [Fact]
+    public void Native_input_layout_matches_win32_input_size()
+    {
+        var expectedSize = IntPtr.Size == 8 ? 40 : 28;
+
+        Assert.Equal(expectedSize, WindowsInputSender.NativeInputSize);
+    }
+
+    [Fact]
     public async Task Changed_target_copies_without_sending_paste()
     {
         var clipboard = new FakeClipboard();

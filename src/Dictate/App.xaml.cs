@@ -443,9 +443,14 @@ public partial class App : System.Windows.Application
             return new NoOpTextCleaner();
         }
 
-        ITextCleaner cloud = new LlmTextCleaner(
-            CloudProviderDefinition.Create(providerName, secrets),
-            settings.Cleanup.Model);
+        ITextCleaner cloud = providerName == "azure-openai"
+            ? new AzureOpenAiTextCleaner(
+                secrets.Get("AZURE_SPEECH_KEY"),
+                settings.Cleanup.AzureEndpoint,
+                settings.Cleanup.Model)
+            : new LlmTextCleaner(
+                CloudProviderDefinition.Create(providerName, secrets),
+                settings.Cleanup.Model);
         if (!settings.Cleanup.FallbackToBasic)
         {
             return cloud;

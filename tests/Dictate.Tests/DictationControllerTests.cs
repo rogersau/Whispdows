@@ -145,6 +145,25 @@ public sealed class DictationControllerTests
         Assert.Contains(PillState.NoSpeechDetected, fixture.Pill.States);
     }
 
+    [Theory]
+    [InlineData("[BLANK_AUDIO]")]
+    [InlineData("  [BLANK_AUDIO]  ")]
+    public async Task Blank_audio_marker_is_discarded_before_cleanup_and_paste(
+        string transcript)
+    {
+        using var fixture = new ControllerFixture();
+        fixture.Transcriber.Transcript = transcript;
+        fixture.Controller.Enable();
+        await fixture.Controller.HandleHotkeyEventAsync(HotkeyEvent.TriggerPressed);
+
+        await fixture.Controller.HandleHotkeyEventAsync(HotkeyEvent.TriggerReleased);
+
+        Assert.Equal(DictationState.Idle, fixture.Controller.State);
+        Assert.Equal(0, fixture.Cleaner.CallCount);
+        Assert.Equal(0, fixture.Inserter.CallCount);
+        Assert.Contains(PillState.NoSpeechDetected, fixture.Pill.States);
+    }
+
     [Fact]
     public async Task Logging_failures_do_not_interrupt_dictation()
     {
@@ -271,6 +290,8 @@ public sealed class DictationControllerTests
     {
         public int CallCount { get; private set; }
 
+        public string Transcript { get; set; } = "raw transcript";
+
         public void ValidateConfiguration()
         {
         }
@@ -280,7 +301,7 @@ public sealed class DictationControllerTests
             CancellationToken cancellationToken)
         {
             CallCount++;
-            return Task.FromResult("raw transcript");
+            return Task.FromResult(Transcript);
         }
 
         public void Dispose()

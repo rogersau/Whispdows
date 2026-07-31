@@ -476,6 +476,61 @@ public sealed class ProviderClientTests
     }
 
     [Fact]
+    public async Task Azure_openai_cleaner_uses_responses_api_and_extracts_message_text()
+    {
+        var handler = new RecordingHandler(
+            _ => JsonResponse(
+                """{"output":[{"type":"reasoning","id":"rs_1","summary":[]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Cleaned text."}]}]}"""));
+        using var client = new HttpClient(handler);
+        using var cleaner = new AzureOpenAiTextCleaner(
+            "azure-secret",
+            "https://resource.services.ai.azure.com/openai/v1",
+            "gpt-5.4-nano",
+            client);
+
+        var result = await cleaner.CleanAsync(
+            "um raw transcript",
+            CancellationToken.None);
+
+        Assert.Equal("Cleaned text.", result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(
+            "https://resource.services.ai.azure.com/openai/v1/responses",
+            request.Uri.AbsoluteUri);
+        Assert.Null(request.Authorization);
+        Assert.Equal("azure-secret", request.ApiKey);
+        using var body = JsonDocument.Parse(request.Body);
+        var root = body.RootElement;
+        Assert.Equal("gpt-5.4-nano", root.GetProperty("model").GetString());
+        Assert.Equal("um raw transcript", root.GetProperty("input").GetString());
+        Assert.False(root.GetProperty("store").GetBoolean());
+        Assert.InRange(root.GetProperty("max_output_tokens").GetInt32(), 64, 2048);
+        Assert.Contains(
+            "Return only the corrected text",
+            root.GetProperty("instructions").GetString());
+        Assert.DoesNotContain("azure-secret", request.Body);
+    }
+
+    [Fact]
+    public async Task Azure_openai_cleaner_missing_shared_key_does_not_request()
+    {
+        var handler = new RecordingHandler(
+            _ => JsonResponse("""{"output":[]}"""));
+        using var client = new HttpClient(handler);
+        using var cleaner = new AzureOpenAiTextCleaner(
+            string.Empty,
+            "https://resource.services.ai.azure.com/openai/v1",
+            "gpt-5.4-nano",
+            client);
+
+        var exception = await Assert.ThrowsAsync<MissingApiKeyException>(
+            () => cleaner.CleanAsync("hello", CancellationToken.None));
+
+        Assert.Equal("AZURE_SPEECH_KEY", exception.ApiKeyName);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task Llm_cleaner_malformed_response_falls_back_to_basic_cleanup()
     {
         var handler = new RecordingHandler(_ => JsonResponse("""{"choices":[]}"""));
@@ -572,6 +627,11 @@ public sealed class ProviderClientTests
                     out var subscriptionKeys)
                     ? subscriptionKeys.Single()
                     : null,
+                request.Headers.TryGetValues(
+                    "api-key",
+                    out var apiKeys)
+                    ? apiKeys.Single()
+                    : null,
                 request.Content?.Headers.ContentType?.ToString() ?? string.Empty,
                 request.Content is null
                     ? string.Empty
@@ -586,6 +646,7 @@ public sealed class ProviderClientTests
         Uri Uri,
         AuthenticationHeaderValue? Authorization,
         string? SubscriptionKey,
+        string? ApiKey,
         string ContentType,
         string Body);
 

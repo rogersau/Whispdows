@@ -98,6 +98,8 @@ public sealed class CleanupSettings
 
     public string Model { get; set; } = string.Empty;
 
+    public string AzureEndpoint { get; set; } = string.Empty;
+
     public string Style { get; set; } = "auto";
 
     public bool FallbackToBasic { get; set; } = true;
@@ -194,7 +196,7 @@ public static class SettingsValidator
 
     private static readonly HashSet<string> CleanupProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "basic", "openai", "groq", "none"
+        "basic", "openai", "groq", "azure-openai", "none"
     };
 
     private static readonly HashSet<string> CleanupStyles = new(StringComparer.OrdinalIgnoreCase)
@@ -296,11 +298,23 @@ public static class SettingsValidator
         {
             AddAllowedValueError(errors, "cleanup.provider", settings.Cleanup.Provider, CleanupProviders);
             AddAllowedValueError(errors, "cleanup.style", settings.Cleanup.Style, CleanupStyles);
+            var isAzureOpenAi = string.Equals(
+                settings.Cleanup.Provider,
+                "azure-openai",
+                StringComparison.OrdinalIgnoreCase);
             if ((string.Equals(settings.Cleanup.Provider, "openai", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(settings.Cleanup.Provider, "groq", StringComparison.OrdinalIgnoreCase))
+                    || string.Equals(settings.Cleanup.Provider, "groq", StringComparison.OrdinalIgnoreCase)
+                    || isAzureOpenAi)
                 && string.IsNullOrWhiteSpace(settings.Cleanup.Model))
             {
                 errors.Add("cleanup.model must not be empty when using a cloud cleanup provider.");
+            }
+
+            if (isAzureOpenAi
+                && !AzureOpenAiConfiguration.IsValidEndpoint(settings.Cleanup.AzureEndpoint))
+            {
+                errors.Add(
+                    "cleanup.azureEndpoint must be an HTTPS Azure OpenAI v1 endpoint ending in /openai/v1.");
             }
         }
 

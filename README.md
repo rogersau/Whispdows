@@ -1,49 +1,96 @@
 # Dictate
 
-Dictate is a small Windows tray application for hold-to-talk AI dictation. All five implementation slices are present: the Windows tray shell, global hold shortcut, WASAPI microphone capture, local or cloud transcription, deterministic or cloud cleanup, focus-safe clipboard paste, rolling privacy-safe logs, and a per-user installer.d
-## Build and run
+<div align="center">
+  <img src="src/Dictate/Assets/dictate-app-master.png" alt="Dictate microphone icon" width="180">
+  <h3>Hold a key. Speak naturally. Keep typing.</h3>
+  <p>A fast, tray-first voice layer for every text field on Windows.</p>
+  <p>
+    <img alt="Windows 11 x64" src="https://img.shields.io/badge/Windows-11%20x64-0078D4?logo=windows&logoColor=white">
+    <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white">
+    <img alt="WASAPI" src="https://img.shields.io/badge/audio-WASAPI-00A98F">
+    <img alt="Azure OpenAI ready" src="https://img.shields.io/badge/Azure%20OpenAI-ready-0078D4?logo=microsoftazure&logoColor=white">
+  </p>
+</div>
 
-The project targets Windows 11 x64 and .NET 10:
+Dictate is a small Windows tray application for hold-to-talk AI dictation. Hold `RightCtrl`, speak, release, and the cleaned result is pasted into the field that was active when you started.
+
+It is deliberately quiet: no editor window, no browser extension, no background service, no transcript history, and no runtime model download.
+
+## The loop
+
+```mermaid
+flowchart LR
+    A[Hold RightCtrl] --> B[Capture microphone]
+    B --> C[Transcribe]
+    C --> D[Clean]
+    D --> E{Original target still focused?}
+    E -->|Yes| F[Paste into the field]
+    E -->|No| G[Copy result and notify]
+```
+
+## Why it feels good
+
+| Capability | What happens |
+| --- | --- |
+| Hold-to-talk | A global shortcut starts recording and release ends it. `Escape` cancels. |
+| Local first | Whisper `small.en` runs on-device when local transcription is selected. |
+| Cloud when useful | Azure Speech, OpenAI, Groq, and Azure OpenAI are supported through explicit settings. |
+| Natural cleanup | Filler words, false starts, punctuation, and obvious transcription mistakes are cleaned without summarising your words. |
+| Corrections survive | Clear spoken corrections such as “actually, use Tuesday” can replace the superseded phrase. |
+| Focus-safe paste | Dictate remembers the original target. If focus changes, it leaves the result on the clipboard instead of pasting into the wrong app. |
+| Clipboard respect | Existing clipboard contents are restored unless another application changed them after Dictate wrote the result. |
+| Tray-native | State is visible through the notification-area icon and a small processing pill. |
+| Release-ready | The packaged build includes the .NET runtime, native Whisper runtime, and verified model. |
+
+## Quick start
+
+### Requirements
+
+- Windows 11 x64
+- .NET 10 SDK
+- PowerShell
+- A microphone
+
+### Run from source
 
 ```powershell
+git clone https://github.com/rogersau/wispdows.git
+Set-Location wispdows
+
 .\scripts\Get-WhisperModel.ps1
-dotnet build .\Dictate.sln
+dotnet test .\Dictate.sln --configuration Release
 dotnet run --project .\src\Dictate\Dictate.csproj
 ```
 
-The model command downloads the official whisper.cpp `small.en` model, verifies its pinned hash, and places it under `models\`. Dictate never downloads a model at runtime.
+Dictate starts without a normal window. Look in the notification area, enable dictation from the tray menu, focus any editable field, and hold `RightCtrl`.
 
-To build the complete self-contained release and installer, install the .NET 10 SDK and Inno Setup, then run:
+### Build a self-contained release
+
+Install the .NET 10 SDK and [Inno Setup](https://jrsoftware.org/isinfo.php), then run:
 
 ```powershell
 .\scripts\Build-Release.ps1 -Version 0.1.0
 ```
 
-The script produces a win-x64 folder under `artifacts\publish\win-x64` and `artifacts\installer\Dictate-Setup.exe`. The installer contains the .NET runtime, whisper.cpp native runtime, and verified `small.en` model; the installed app does not require .NET, Python, Docker, Node.js, or a separate model download.
+The output is written to:
 
-The application starts without a normal window. Find it in the notification area. Its menu can enable or disable dictation, toggle launch at login, reload settings, open the settings folder, and exit.
+```text
+artifacts\publish\win-x64\
+artifacts\installer\Dictate-Setup.exe
+```
 
-When dictation is enabled, hold the configured shortcut—`RightCtrl` by default—to record. Release it to stop, transcribe locally, clean the text, and paste into the window that was active when recording began. Press `Escape` to cancel. Repeated presses are ignored while a recording is being processed, recordings shorter than 250 ms are discarded, and capture stops at `audio.maxSeconds`.
+The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Dictate`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Dictate` so upgrades do not overwrite them.
 
-If focus changes during processing, Dictate leaves the result on the clipboard and shows `Copied — target changed`. Clipboard contents are restored only when no other application changed them after Dictate wrote its text.
+## Configure it
 
-## Settings
-
-The application creates this file on first start:
+Dictate creates these files on first start:
 
 ```text
 %LOCALAPPDATA%\Dictate\settings.json
-```
-
-The checked-in [settings.example.json](settings.example.json) shows the complete configuration shape. Settings are validated before they are loaded or saved; an invalid reload leaves the last valid in-memory settings active.
-
-The application also creates a plain-text secrets file:
-
-```text
 %LOCALAPPDATA%\Dictate\.env
 ```
 
-Set only the keys for providers you select:
+The complete checked-in settings shape is in [`settings.example.json`](settings.example.json). The secrets file is intentionally simple and is ignored by Git:
 
 ```dotenv
 OPENAI_API_KEY=
@@ -51,77 +98,111 @@ GROQ_API_KEY=
 AZURE_SPEECH_KEY=
 ```
 
-Select `openai`, `groq`, or `azure` under `transcription.provider` for cloud transcription. OpenAI defaults to `gpt-4o-transcribe`; Groq defaults to `whisper-large-v3-turbo`.
+Only add the keys for providers you select. Never commit a real key.
 
-Azure uses the [Speech Fast Transcription REST API](https://learn.microsoft.com/azure/ai-services/speech-service/fast-transcription-create). Set `AZURE_SPEECH_KEY` to a Speech resource key, then set `transcription.azureRegion` to the matching [region identifier](https://learn.microsoft.com/azure/ai-services/speech-service/regions) and `transcription.azureLocale` to the expected speech locale. For an Australian resource:
+### Transcription providers
+
+| Provider | Setting | Notes |
+| --- | --- | --- |
+| `local` | `transcription.provider` | Whisper `small.en` through Whisper.net. |
+| `azure` | `transcription.provider` | Azure Speech Fast Transcription; configure `azureRegion` and `azureLocale`. |
+| `openai` | `transcription.provider` | OpenAI-compatible transcription; configure `openaiModel`. |
+| `groq` | `transcription.provider` | Groq-hosted transcription; configure `groqModel`. |
+
+Cloud transcription can fall back to the local model when `fallbackToLocal` is enabled. Failed cloud calls are not retried.
+
+### Cleanup providers
+
+Cleanup is independent of transcription:
+
+| Provider | Behavior |
+| --- | --- |
+| `basic` | Local, deterministic cleanup for whitespace, fillers, and sentence casing. |
+| `none` | Paste the transcript without cleanup. |
+| `openai` / `groq` | Send the transcript to a Chat Completions model. |
+| `azure-openai` | Send the transcript to an Azure OpenAI deployment through the Responses API. |
+
+For Azure OpenAI, use the Azure resource's v1 endpoint and deployment name:
 
 ```json
 {
   "transcription": {
     "provider": "azure",
     "azureRegion": "australiaeast",
-    "azureLocale": "en-AU"
+    "azureLocale": "en-AU",
+    "fallbackToLocal": false
+  },
+  "cleanup": {
+    "provider": "azure-openai",
+    "model": "gpt-5.4-nano",
+    "azureEndpoint": "https://<resource>.services.ai.azure.com/openai/v1",
+    "fallbackToBasic": true
   }
 }
 ```
 
-Azure keys are region-scoped, so the configured region must match the Speech resource. A missing key is reported before recording unless `fallbackToLocal` is enabled, in which case Dictate skips the cloud request and uses the validated local model. Failed and timed-out requests are not retried.
+The Azure OpenAI cleanup provider reuses `AZURE_SPEECH_KEY`, so a Speech resource key can serve both configured Azure operations when the resource supports them. The request sets `store` to `false`; the app still sends the raw transcript and fixed cleanup instructions to Azure for processing.
 
-Cloud cleanup is independent of transcription. Select `openai` or `groq` under `cleanup.provider` and set `cleanup.model` to a chat-completions model available to that provider account. When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malformed response falls back to deterministic basic cleanup so a successful transcript is not discarded.
+When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malformed response falls back to deterministic local cleanup so a successful transcript is not discarded.
 
-Supported shortcut examples include:
+## Everyday behavior
+
+- Hold the configured shortcut—`RightCtrl` by default—to record.
+- Release it to transcribe, clean, and paste.
+- Press `Escape` while recording to cancel.
+- Recordings shorter than 250 ms are discarded.
+- Capture stops at `audio.maxSeconds`.
+- `[BLANK_AUDIO]` responses are discarded as empty input.
+- Repeated shortcut presses are ignored while a recording is processing.
+- If the target changes, the result stays on the clipboard and Dictate shows `Copied — target changed`.
+- If the target is running as administrator and Dictate is not, Windows may block automatic input; use the clipboard result manually.
+
+The cleanup prompt is intentionally conservative. It removes filler and abandoned starts, repairs punctuation, preserves names and technical terms, and handles clear corrections without turning dictation into a summary or an answer.
+
+## Windows notes
+
+For microphone access, enable **Settings → Privacy & security → Microphone → Let desktop apps access your microphone**.
+
+The physical `Fn` key is usually handled by keyboard firmware and may not be visible to Windows. If needed, map a hardware button to `F13` and use that as the Dictate shortcut.
+
+Dictate uses a global low-level keyboard hook and `SendInput` for paste. It does not require Accessibility or Input Monitoring permissions. It remains a non-elevated application by design.
+
+## Privacy model
+
+- Audio and transcripts are held in memory and released after processing or cancellation.
+- With local transcription plus `basic` or `none` cleanup, no audio or transcript is sent over the network.
+- Cloud transcription sends the completed WAV recording to the selected provider.
+- Cloud cleanup sends only the transcript and fixed cleanup instructions—not surrounding app content, clipboard context, or window contents.
+- There is no telemetry, analytics, remote logging, crash reporting, or transcript history.
+- Local logs contain state, durations, provider names, and exception types only. They do not contain audio, transcript text, clipboard contents, request bodies, API keys, or authorization headers.
+- API keys live in the user-owned plain-text `.env` file, which is excluded from Git.
+
+The unsigned personal installer may trigger Microsoft Defender SmartScreen. Build from source or code-sign the release where practical; do not disable Defender, SmartScreen, or antivirus protection globally.
+
+## Project map
 
 ```text
-RightCtrl
-Ctrl+Win+Space
-F13
+src/Dictate/
+├── AudioRecorder.cs          WASAPI capture and WAV output
+├── Transcribers.cs            local Whisper pipeline and orchestration
+├── CloudProviders.cs          OpenAI, Groq, and Azure OpenAI clients
+├── AzureSpeechTranscriber.cs  Azure Speech client
+├── TextCleaners.cs            deterministic cleanup
+├── TextInserter.cs            clipboard-safe focus-aware paste
+├── TrayMenu.cs                notification-area controls
+└── DictationState.cs          recording → transcription → cleanup → paste state machine
 ```
 
-The trigger can also be a letter, digit, or `F1`–`F24`. `Escape` is reserved for cancelling an active recording.
+## Development checks
 
-The launch-at-login option uses the per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` registry key and does not require administrator access.
+Run the full automated suite:
 
-## Install and uninstall
-
-`Dictate-Setup.exe` installs without elevation to:
-
-```text
-%LOCALAPPDATA%\Programs\Dictate
+```powershell
+dotnet test .\Dictate.sln --configuration Release --nologo --verbosity minimal
 ```
 
-Settings, API keys, and logs live separately under `%LOCALAPPDATA%\Dictate`. Upgrades preserve these files. Uninstall also preserves them by default and explicitly asks whether to remove them.
+The manual packaged-app checks live in [`tests/manual-smoke-checklist.md`](tests/manual-smoke-checklist.md). They cover installation, lifecycle, Notepad/browser/Teams/VS Code targets, focus changes, elevated targets, microphone permissions, cloud fallback, and log privacy.
 
-The installer can enable launch at login and creates Start menu shortcuts for Dictate, this README, and Uninstall. It installs no service, driver, scheduled task, shell extension, or browser extension.
+## License
 
-## Windows permissions and limitations
-
-Windows has no Accessibility or Input Monitoring permission switch for an ordinary desktop application like Dictate.
-
-For microphone access on Windows 11:
-
-1. Open **Settings**.
-2. Go to **Privacy & security → Microphone**.
-3. Turn on **Microphone access**.
-4. Turn on **Let desktop apps access your microphone**.
-
-Windows normally shows a microphone indicator in the notification area while capture is active.
-
-For keyboard and paste access, Dictate uses a global low-level keyboard hook to recognize only the configured shortcut and `SendInput` to press `Ctrl+V`. There is no separate permission to grant.
-
-The physical `Fn` key is commonly handled by keyboard firmware and may not be visible to Windows. The default shortcut is `RightCtrl`; a hardware button can be remapped to `F13` when needed.
-
-Dictate will remain a non-elevated application. Windows does not allow a normal process to inject input into a target running as administrator; the completed dictation will remain on the clipboard in that case.
-
-The launch-at-login toggle can also be inspected or disabled under **Settings → Apps → Startup** or Task Manager’s Startup Apps page.
-
-An unsigned personal installer may trigger Microsoft Defender SmartScreen. Build from source or code-sign the release where practical. Do not disable Defender, SmartScreen, or antivirus protection globally to install Dictate.
-
-## Privacy
-
-Audio capture and transcripts stay in memory and are explicitly released after processing or cancellation. With `transcription.provider` set to `local` and `cleanup.provider` set to `basic` or `none`, no audio or transcript is sent over the network. Cloud transcription sends the completed WAV recording to the selected provider, including Azure Speech when selected. Cloud cleanup sends only the raw transcript and fixed cleanup instructions to the selected provider; it does not send surrounding app or clipboard context.
-
-API keys remain in the user-owned plain-text `.env` file. Dictate has no remote logging, analytics, telemetry, crash reporting, or transcript history.
-
-Local logs are kept under `%LOCALAPPDATA%\Dictate\logs`. At most five 256 KiB files contain state changes, operation durations, provider names, and exception types. They never include audio, transcript text, clipboard contents, request bodies, API keys, or authorization headers.
-
-The repeatable manual release checks are in [tests/manual-smoke-checklist.md](tests/manual-smoke-checklist.md).
+No license has been selected for this repository yet. Until one is added, treat the source as public for viewing but do not assume permission to redistribute or reuse it.

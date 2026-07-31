@@ -299,19 +299,23 @@ public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
     }
 }
 
-public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
+internal static class TextCleanupPrompt
 {
-    private const string SystemPrompt = """
+    internal const string System = """
         You clean voice dictation transcripts.
 
         Return only the corrected text.
         - Remove filler words and abandoned false starts only when meaning is unchanged.
         - Fix punctuation, spacing, and obvious transcription mistakes.
         - Preserve the speaker's wording, intent, names, numbers, URLs, and technical terms.
+        - When the speaker clearly corrects, retracts, or replaces something, keep the correction and remove the superseded wording only when the intended change is clear.
         - Do not summarise, answer, explain, or add information.
         - Match casing to the apparent dictation style. Use normal sentence case for prose, preserve intentional capitals, and keep short casual fragments natural.
         """;
+}
 
+public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
+{
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(20);
 
     private readonly CloudProviderDefinition _provider;
@@ -358,7 +362,7 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
             model = _model,
             messages = new[]
             {
-                new { role = "system", content = SystemPrompt },
+                new { role = "system", content = TextCleanupPrompt.System },
                 new { role = "user", content = transcript }
             },
             temperature = 0,
@@ -456,6 +460,243 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IPro
         {
             throw CloudRequestException.Malformed(_provider.Name, exception);
         }
+    }
+}
+
+public sealed class AzureOpenAiTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
+{
+    private const string ProviderDisplayName = "Azure OpenAI";
+    private const string ApiKeyName = "AZURE_SPEECH_KEY";
+    private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(20);
+
+    private readonly string _apiKey;
+    private readonly string _endpoint;
+    private readonly string _model;
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+    private readonly TimeSpan _timeout;
+    private bool _disposed;
+
+    public AzureOpenAiTextCleaner(
+        string apiKey,
+        string endpoint,
+        string model,
+        HttpClient? httpClient = null,
+        TimeSpan? timeout = null)
+    {
+        _apiKey = apiKey;
+        _endpoint = endpoint;
+        _model = model;
+        _httpClient = httpClient ?? new HttpClient();
+        _ownsHttpClient = httpClient is null;
+        _timeout = timeout ?? DefaultTimeout;
+    }
+
+    public string ProviderName => "azure-openai";
+
+    public void ValidateConfiguration()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (string.IsNullOrWhiteSpace(_apiKey))
+        {
+            throw new MissingApiKeyException(ProviderDisplayName, ApiKeyName);
+        }
+
+        if (_apiKey.Any(character => character is '\r' or '\n'))
+        {
+            throw new InvalidOperationException(
+                $"{ApiKeyName} contains invalid control characters.");
+        }
+
+        if (string.IsNullOrWhiteSpace(_model))
+        {
+            throw new InvalidOperationException(
+                $"A model must be configured for the {ProviderDisplayName} provider.");
+        }
+
+        _ = AzureOpenAiConfiguration.CreateResponsesEndpoint(_endpoint);
+    }
+
+    public async Task<string> CleanAsync(
+        string transcript,
+        CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(transcript);
+        ValidateConfiguration();
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(_timeout);
+
+        var requestBody = new
+        {
+            model = _model,
+            instructions = TextCleanupPrompt.System,
+            input = transcript,
+            store = false,
+            max_output_tokens = CalculateOutputLimit(transcript)
+        };
+
+        try
+        {
+            using var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                AzureOpenAiConfiguration.CreateResponsesEndpoint(_endpoint));
+            request.Headers.Add("api-key", _apiKey);
+            request.Content = new StringContent(
+                JsonSerializer.Serialize(requestBody),
+                Encoding.UTF8,
+                "application/json");
+
+            using var response = await SendAsync(request, timeout.Token);
+            return await ReadCleanedTextAsync(response, timeout.Token);
+        }
+        catch (OperationCanceledException exception)
+            when (!cancellationToken.IsCancellationRequested)
+        {
+            throw CloudRequestException.Timeout(ProviderDisplayName, exception);
+        }
+        catch (HttpRequestException exception)
+        {
+            throw CloudRequestException.Transport(ProviderDisplayName, exception);
+        }
+    }
+
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (_ownsHttpClient)
+        {
+            _httpClient.Dispose();
+        }
+    }
+
+    private static int CalculateOutputLimit(string transcript)
+    {
+        return Math.Clamp((transcript.Length / 3) + 64, 64, 2048);
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken)
+    {
+        var response = await _httpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseContentRead,
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var statusCode = response.StatusCode;
+            response.Dispose();
+            throw CloudRequestException.ApiError(ProviderDisplayName, statusCode);
+        }
+
+        return response;
+    }
+
+    private static async Task<string> ReadCleanedTextAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var content = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(
+                content,
+                cancellationToken: cancellationToken);
+            var root = document.RootElement;
+
+            if (root.TryGetProperty("output_text", out var outputText)
+                && outputText.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(outputText.GetString()))
+            {
+                return outputText.GetString()!.Trim();
+            }
+
+            if (!root.TryGetProperty("output", out var output)
+                || output.ValueKind != JsonValueKind.Array)
+            {
+                throw CloudRequestException.Malformed(ProviderDisplayName);
+            }
+
+            var textParts = new List<string>();
+            foreach (var outputItem in output.EnumerateArray())
+            {
+                if (!outputItem.TryGetProperty("type", out var type)
+                    || !string.Equals(type.GetString(), "message", StringComparison.Ordinal)
+                    || !outputItem.TryGetProperty("content", out var contentItems)
+                    || contentItems.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var contentItem in contentItems.EnumerateArray())
+                {
+                    if (contentItem.TryGetProperty("type", out var contentType)
+                        && string.Equals(
+                            contentType.GetString(),
+                            "output_text",
+                            StringComparison.Ordinal)
+                        && contentItem.TryGetProperty("text", out var text)
+                        && text.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrWhiteSpace(text.GetString()))
+                    {
+                        textParts.Add(text.GetString()!.Trim());
+                    }
+                }
+            }
+
+            if (textParts.Count == 0)
+            {
+                throw CloudRequestException.Malformed(ProviderDisplayName);
+            }
+
+            return string.Join(Environment.NewLine, textParts).Trim();
+        }
+        catch (JsonException exception)
+        {
+            throw CloudRequestException.Malformed(ProviderDisplayName, exception);
+        }
+    }
+}
+
+internal static class AzureOpenAiConfiguration
+{
+    private const string RequiredPath = "/openai/v1";
+
+    public static bool IsValidEndpoint(string? endpoint)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint)
+            || !Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return uri.Scheme == Uri.UriSchemeHttps
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment)
+            && uri.AbsolutePath.TrimEnd('/').EndsWith(
+                RequiredPath,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static Uri CreateResponsesEndpoint(string endpoint)
+    {
+        if (!IsValidEndpoint(endpoint))
+        {
+            throw new InvalidOperationException(
+                "cleanup.azureEndpoint must be an HTTPS Azure OpenAI v1 endpoint ending in /openai/v1.");
+        }
+
+        return new Uri(
+            endpoint.Trim().TrimEnd('/') + "/responses",
+            UriKind.Absolute);
     }
 }
 
