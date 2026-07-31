@@ -92,7 +92,7 @@ if (Test-Path -LiteralPath $publishDirectory) {
 New-Item -ItemType Directory -Force -Path $publishDirectory | Out-Null
 Push-Location $repositoryRoot
 try {
-    dotnet publish .\src\Dictate\Dictate.csproj `
+    dotnet publish .\src\Whispdows\Whispdows.csproj `
         -c Release `
         -r win-x64 `
         --self-contained true `
@@ -126,7 +126,7 @@ $nativeRuntimeFiles = @(
     'whisper.dll'
 ) | ForEach-Object { Join-Path $nativeRuntimeDirectory $_ }
 foreach ($requiredFile in @(
-    (Join-Path $publishDirectory 'Dictate.exe'),
+    (Join-Path $publishDirectory 'Whispdows.exe'),
     (Join-Path $publishDirectory 'README.md'),
     (Join-Path $publishDirectory 'settings.example.json'),
     (Join-Path $publishDirectory '.env.example'),
@@ -146,7 +146,7 @@ if ($unexpectedRuntimeDirectories.Count -gt 0) {
     throw "Published release contains unexpected runtime directories: $($unexpectedRuntimeDirectories.Name -join ', ')."
 }
 
-Assert-X64PortableExecutable -Path (Join-Path $publishDirectory 'Dictate.exe')
+Assert-X64PortableExecutable -Path (Join-Path $publishDirectory 'Whispdows.exe')
 foreach ($nativeRuntimeFile in $nativeRuntimeFiles) {
     Assert-X64PortableExecutable -Path $nativeRuntimeFile
 }
@@ -177,12 +177,12 @@ if (-not $SkipInstaller) {
     }
 
     New-Item -ItemType Directory -Force -Path $installerDirectory | Out-Null
-    & $compilerPath "/DMyAppVersion=$Version" (Join-Path $repositoryRoot 'installer\Dictate.iss')
+    & $compilerPath "/DMyAppVersion=$Version" (Join-Path $repositoryRoot 'installer\Whispdows.iss')
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup failed with exit code $LASTEXITCODE."
     }
 
-    $installerPath = Join-Path $installerDirectory 'Dictate-Setup.exe'
+    $installerPath = Join-Path $installerDirectory 'Whispdows-Setup.exe'
     if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
         throw "Inno Setup completed without producing '$installerPath'."
     }

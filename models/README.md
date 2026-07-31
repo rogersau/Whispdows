@@ -8,4 +8,4 @@ Download the pinned model used by release builds:
 .\scripts\Get-WhisperModel.ps1
 ```
 
-The script downloads the official whisper.cpp `small.en` model and verifies SHA-1 `db8a495a91d927739e50b3fc1cc4c6b8f6c2d022` before moving it into place. Dictate itself never downloads models silently.
+The script downloads the official whisper.cpp `small.en` model and verifies SHA-1 `db8a495a91d927739e50b3fc1cc4c6b8f6c2d022` before moving it into place. Whispdows itself never downloads models silently.

@@ -1,8 +1,8 @@
-# Dictate: Lean Windows AI Dictation Tool Design
+# Whispdows: Lean Windows AI Dictation Tool Design
 
 **Status:** Proposed design  
 **Target:** Windows 11 x64, one user, per-user installation  
-**Working name:** `Dictate`
+**Working name:** `Whispdows`
 
 ## 1. Design summary
 
@@ -84,7 +84,7 @@ Do not build these in version 1:
 
 ### Normal flow
 
-1. `Dictate` starts in the Windows notification area.
+1. `Whispdows` starts in the Windows notification area.
 2. The user places the cursor in any normal text field.
 3. The user holds the configured shortcut, initially `RightCtrl`.
 4. A pill appears near the bottom centre of the active monitor:
@@ -231,7 +231,7 @@ Behaviour:
 - `Enabled` installs or removes the keyboard hook.
 - `Launch at login` writes or removes a per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value.
 - `Reload settings` validates and reloads `settings.json` and `.env` without restarting.
-- `Open settings folder` opens `%LOCALAPPDATA%\Dictate`.
+- `Open settings folder` opens `%LOCALAPPDATA%\Whispdows`.
 - No graphical settings window is required.
 
 ### 8.2 Audio recorder
@@ -388,7 +388,7 @@ Clipboard access should retry a few times over a short period because another pr
 
 #### Known Windows limitation
 
-A normally running app cannot inject input into a target running at a higher integrity level. Therefore, pasting into an application running “as administrator” can fail. Do not make `Dictate` run elevated by default. Leave the result on the clipboard in this case.
+A normally running app cannot inject input into a target running at a higher integrity level. Therefore, pasting into an application running “as administrator” can fail. Do not make `Whispdows` run elevated by default. Leave the result on the clipboard in this case.
 
 ### 8.7 Floating pill
 
@@ -424,14 +424,14 @@ Standard install:
 
 ```text
 Application:
-%LOCALAPPDATA%\Programs\Dictate\
+%LOCALAPPDATA%\Programs\Whispdows\
 
 User settings and secrets:
-%LOCALAPPDATA%\Dictate\settings.json
-%LOCALAPPDATA%\Dictate\.env
+%LOCALAPPDATA%\Whispdows\settings.json
+%LOCALAPPDATA%\Whispdows\.env
 
 Logs:
-%LOCALAPPDATA%\Dictate\logs\
+%LOCALAPPDATA%\Whispdows\logs\
 ```
 
 The installer creates example configuration files only when they do not already exist, so upgrades do not overwrite local settings or keys. Relative paths such as `models/ggml-small.en.bin` resolve from the application directory, not from the settings directory.
@@ -510,8 +510,8 @@ On startup and reload:
 Keep the project flat and understandable:
 
 ```text
-Dictate/
-├─ src/Dictate/
+Whispdows/
+├─ src/Whispdows/
 │  ├─ App.xaml
 │  ├─ App.xaml.cs
 │  ├─ DictationController.cs
@@ -527,13 +527,13 @@ Dictate/
 │  ├─ TrayMenu.cs
 │  ├─ Settings.cs
 │  └─ StartupRegistration.cs
-├─ tests/Dictate.Tests/
+├─ tests/Whispdows.Tests/
 │  ├─ HotkeyParserTests.cs
 │  ├─ BasicTextCleanerTests.cs
 │  ├─ SettingsTests.cs
 │  └─ ProviderClientTests.cs
 ├─ installer/
-│  └─ Dictate.iss
+│  └─ Whispdows.iss
 ├─ models/
 │  └─ ggml-small.en.bin
 ├─ README.md
@@ -605,7 +605,7 @@ Target Windows 11 x64 only for version 1.
 Publish a self-contained .NET build so the machine does not need a separately installed .NET runtime:
 
 ```powershell
-dotnet publish .\src\Dictate\Dictate.csproj `
+dotnet publish .\src\Whispdows\Whispdows.csproj `
   -c Release `
   -r win-x64 `
   --self-contained true `
@@ -613,18 +613,18 @@ dotnet publish .\src\Dictate\Dictate.csproj `
   -p:PublishTrimmed=false
 ```
 
-A folder publish is intentional. WPF, native whisper.cpp libraries, and the model are easier to package and diagnose as normal files. Inno Setup then produces one `Dictate-Setup.exe` containing the full folder.
+A folder publish is intentional. WPF, native whisper.cpp libraries, and the model are easier to package and diagnose as normal files. Inno Setup then produces one `Whispdows-Setup.exe` containing the full folder.
 
 ### Installer behaviour
 
 Use a per-user Inno Setup installer:
 
-- Install to `%LOCALAPPDATA%\Programs\Dictate`.
+- Install to `%LOCALAPPDATA%\Programs\Whispdows`.
 - Require no administrator rights.
 - Include the .NET runtime, native whisper.cpp runtime, and `small.en` model.
-- Add Start menu shortcuts for `Dictate`, `README`, and `Uninstall`.
+- Add Start menu shortcuts for `Whispdows`, `README`, and `Uninstall`.
 - Optionally enable launch at login during installation.
-- Preserve `%LOCALAPPDATA%\Dictate` settings during upgrades and uninstall unless the user explicitly chooses to remove them.
+- Preserve `%LOCALAPPDATA%\Whispdows` settings during upgrades and uninstall unless the user explicitly chooses to remove them.
 - Do not install a Windows service, scheduled task, driver, shell extension, or browser extension.
 
 ### Code signing

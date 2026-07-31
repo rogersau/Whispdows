@@ -1,7 +1,7 @@
-# Dictate
+# Whispdows
 
 <div align="center">
-  <img src="src/Dictate/Assets/dictate-app-master.png" alt="Dictate microphone icon" width="180">
+  <img src="src/Whispdows/Assets/whispdows-app-master.png" alt="Whispdows microphone icon" width="180">
   <h3>Hold a key. Speak naturally. Keep typing.</h3>
   <p>A fast, tray-first voice layer for every text field on Windows.</p>
   <p>
@@ -12,7 +12,7 @@
   </p>
 </div>
 
-Dictate is a small Windows tray application for hold-to-talk AI dictation. Hold `RightCtrl`, speak, release, and the cleaned result is pasted into the field that was active when you started.
+Whispdows is a small Windows tray application for hold-to-talk AI dictation. Hold `RightCtrl`, speak, release, and the cleaned result is pasted into the field that was active when you started.
 
 It is deliberately quiet: no editor window, no browser extension, no background service, no transcript history, and no runtime model download.
 
@@ -37,8 +37,8 @@ flowchart LR
 | Cloud when useful | Azure Speech, OpenAI, Groq, and Azure OpenAI are supported through explicit settings. |
 | Natural cleanup | Filler words, false starts, punctuation, and obvious transcription mistakes are cleaned without summarising your words. |
 | Corrections survive | Clear spoken corrections such as “actually, use Tuesday” can replace the superseded phrase. |
-| Focus-safe paste | Dictate remembers the original target. If focus changes, it leaves the result on the clipboard instead of pasting into the wrong app. |
-| Clipboard respect | Existing clipboard contents are restored unless another application changed them after Dictate wrote the result. |
+| Focus-safe paste | Whispdows remembers the original target. If focus changes, it leaves the result on the clipboard instead of pasting into the wrong app. |
+| Clipboard respect | Existing clipboard contents are restored unless another application changed them after Whispdows wrote the result. |
 | Tray-native | State is visible through the notification-area icon and a small processing pill. |
 | Release-ready | The packaged build includes the .NET runtime, native Whisper runtime, and verified model. |
 
@@ -54,15 +54,24 @@ flowchart LR
 ### Run from source
 
 ```powershell
-git clone https://github.com/rogersau/wispdows.git
-Set-Location wispdows
+git clone https://github.com/rogersau/Whispdows.git
+Set-Location Whispdows
 
-.\scripts\Get-WhisperModel.ps1
-dotnet test .\Dictate.sln --configuration Release
-dotnet run --project .\src\Dictate\Dictate.csproj
+If you are renaming an existing Dictate installation, copy these files manually
+before launching Whispdows for the first time:
+
+```powershell
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Whispdows"
+Copy-Item "$env:LOCALAPPDATA\Dictate\settings.json" "$env:LOCALAPPDATA\Whispdows\settings.json"
+Copy-Item "$env:LOCALAPPDATA\Dictate\.env" "$env:LOCALAPPDATA\Whispdows\.env"
 ```
 
-Dictate starts without a normal window. Look in the notification area, enable dictation from the tray menu, focus any editable field, and hold `RightCtrl`.
+.\scripts\Get-WhisperModel.ps1
+dotnet test .\Whispdows.sln --configuration Release
+dotnet run --project .\src\Whispdows\Whispdows.csproj
+```
+
+Whispdows starts without a normal window. Look in the notification area, enable dictation from the tray menu, focus any editable field, and hold `RightCtrl`.
 
 ### Build a self-contained release
 
@@ -76,18 +85,18 @@ The output is written to:
 
 ```text
 artifacts\publish\win-x64\
-artifacts\installer\Dictate-Setup.exe
+artifacts\installer\Whispdows-Setup.exe
 ```
 
-The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Dictate`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Dictate` so upgrades do not overwrite them.
+The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Whispdows`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Whispdows` so upgrades do not overwrite them.
 
 ## Configure it
 
-Dictate creates these files on first start:
+Whispdows creates these files on first start:
 
 ```text
-%LOCALAPPDATA%\Dictate\settings.json
-%LOCALAPPDATA%\Dictate\.env
+%LOCALAPPDATA%\Whispdows\settings.json
+%LOCALAPPDATA%\Whispdows\.env
 ```
 
 The complete checked-in settings shape is in [`settings.example.json`](settings.example.json). The secrets file is intentionally simple and is ignored by Git:
@@ -145,6 +154,12 @@ The Azure OpenAI cleanup provider reuses `AZURE_SPEECH_KEY`, so a Speech resourc
 
 When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malformed response falls back to deterministic local cleanup so a successful transcript is not discarded.
 
+### Settings window
+
+Right-click the tray icon and choose **Settings…** to edit the configuration without opening JSON. The editor groups the hotkey, audio, transcription, cleanup, and paste controls; provider-specific fields appear only when they are relevant. **Save & Apply** validates the complete candidate, swaps the runtime pipeline, persists the file, and rolls back to the last working configuration if anything fails. API keys remain in `.env` and are never displayed in the editor.
+
+**Reload settings** remains available for changes made directly in `settings.json` or `.env`, while **Open settings folder** is useful for inspecting those files.
+
 ## Everyday behavior
 
 - Hold the configured shortcut—`RightCtrl` by default—to record.
@@ -154,8 +169,8 @@ When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malform
 - Capture stops at `audio.maxSeconds`.
 - `[BLANK_AUDIO]` responses are discarded as empty input.
 - Repeated shortcut presses are ignored while a recording is processing.
-- If the target changes, the result stays on the clipboard and Dictate shows `Copied — target changed`.
-- If the target is running as administrator and Dictate is not, Windows may block automatic input; use the clipboard result manually.
+- If the target changes, the result stays on the clipboard and Whispdows shows `Copied — target changed`.
+- If the target is running as administrator and Whispdows is not, Windows may block automatic input; use the clipboard result manually.
 
 The cleanup prompt is intentionally conservative. It removes filler and abandoned starts, repairs punctuation, preserves names and technical terms, and handles clear corrections without turning dictation into a summary or an answer.
 
@@ -163,9 +178,9 @@ The cleanup prompt is intentionally conservative. It removes filler and abandone
 
 For microphone access, enable **Settings → Privacy & security → Microphone → Let desktop apps access your microphone**.
 
-The physical `Fn` key is usually handled by keyboard firmware and may not be visible to Windows. If needed, map a hardware button to `F13` and use that as the Dictate shortcut.
+The physical `Fn` key is usually handled by keyboard firmware and may not be visible to Windows. If needed, map a hardware button to `F13` and use that as the Whispdows shortcut.
 
-Dictate uses a global low-level keyboard hook and `SendInput` for paste. It does not require Accessibility or Input Monitoring permissions. It remains a non-elevated application by design.
+Whispdows uses a global low-level keyboard hook and `SendInput` for paste. It does not require Accessibility or Input Monitoring permissions. It remains a non-elevated application by design.
 
 ## Privacy model
 
@@ -182,7 +197,7 @@ The unsigned personal installer may trigger Microsoft Defender SmartScreen. Buil
 ## Project map
 
 ```text
-src/Dictate/
+src/Whispdows/
 ├── AudioRecorder.cs          WASAPI capture and WAV output
 ├── Transcribers.cs            local Whisper pipeline and orchestration
 ├── CloudProviders.cs          OpenAI, Groq, and Azure OpenAI clients
@@ -198,7 +213,7 @@ src/Dictate/
 Run the full automated suite:
 
 ```powershell
-dotnet test .\Dictate.sln --configuration Release --nologo --verbosity minimal
+dotnet test .\Whispdows.sln --configuration Release --nologo --verbosity minimal
 ```
 
 The manual packaged-app checks live in [`tests/manual-smoke-checklist.md`](tests/manual-smoke-checklist.md). They cover installation, lifecycle, Notepad/browser/Teams/VS Code targets, focus changes, elevated targets, microphone permissions, cloud fallback, and log privacy.
