@@ -517,28 +517,33 @@ public partial class App : System.Windows.Application
             return new NoOpTextCleaner();
         }
 
-        ITextCleaner cloud = providerName == "azure-openai"
-            ? new AzureOpenAiTextCleaner(
+        ITextCleaner aiCleaner = providerName switch
+        {
+            "azure-openai" => new AzureOpenAiTextCleaner(
                 secrets.Get("AZURE_SPEECH_KEY"),
                 settings.Cleanup.AzureEndpoint,
-                settings.Cleanup.Model)
-            : new LlmTextCleaner(
+                settings.Cleanup.Model),
+            "ollama" => new OllamaTextCleaner(
+                settings.Cleanup.LocalModel,
+                settings.Cleanup.LocalEndpoint),
+            _ => new LlmTextCleaner(
                 CloudProviderDefinition.Create(providerName, secrets),
-                settings.Cleanup.Model);
+                settings.Cleanup.Model)
+        };
         if (!settings.Cleanup.FallbackToBasic)
         {
-            return cloud;
+            return aiCleaner;
         }
 
         try
         {
             return new FallbackTextCleaner(
-                cloud,
+                aiCleaner,
                 new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant()));
         }
         catch
         {
-            if (cloud is IDisposable disposable)
+            if (aiCleaner is IDisposable disposable)
             {
                 disposable.Dispose();
             }

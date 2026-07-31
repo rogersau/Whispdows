@@ -22,6 +22,8 @@
   "cleanup": {
     "provider": "basic",
     "model": "",
+    "localModel": "gemma3:1b",
+    "localEndpoint": "http://127.0.0.1:11434/v1",
     "azureEndpoint": "",
     "style": "auto",
     "fallbackToBasic": true

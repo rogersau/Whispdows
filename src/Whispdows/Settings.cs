@@ -95,6 +95,8 @@ internal static class SettingsSnapshot
             {
                 Provider = source.Cleanup.Provider,
                 Model = source.Cleanup.Model,
+                LocalModel = source.Cleanup.LocalModel,
+                LocalEndpoint = source.Cleanup.LocalEndpoint,
                 AzureEndpoint = source.Cleanup.AzureEndpoint,
                 Style = source.Cleanup.Style,
                 FallbackToBasic = source.Cleanup.FallbackToBasic
@@ -149,6 +151,10 @@ public sealed class CleanupSettings
     public string Provider { get; set; } = "basic";
 
     public string Model { get; set; } = string.Empty;
+
+    public string LocalModel { get; set; } = "gemma3:1b";
+
+    public string LocalEndpoint { get; set; } = "http://127.0.0.1:11434/v1";
 
     public string AzureEndpoint { get; set; } = string.Empty;
 
@@ -248,7 +254,7 @@ public static class SettingsValidator
 
     private static readonly HashSet<string> CleanupProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "basic", "openai", "groq", "azure-openai", "none"
+        "basic", "openai", "groq", "azure-openai", "ollama", "none"
     };
 
     private static readonly HashSet<string> CleanupStyles = new(StringComparer.OrdinalIgnoreCase)
@@ -367,6 +373,20 @@ public static class SettingsValidator
             {
                 errors.Add(
                     "cleanup.azureEndpoint must be an HTTPS Azure OpenAI v1 endpoint ending in /openai/v1.");
+            }
+
+            if (string.Equals(settings.Cleanup.Provider, "ollama", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(settings.Cleanup.LocalModel))
+                {
+                    errors.Add("cleanup.localModel must not be empty when using Ollama.");
+                }
+
+                if (!LocalOllamaConfiguration.IsValidEndpoint(settings.Cleanup.LocalEndpoint))
+                {
+                    errors.Add(
+                        "cleanup.localEndpoint must be an HTTP(S) loopback OpenAI-compatible endpoint.");
+                }
             }
         }
 

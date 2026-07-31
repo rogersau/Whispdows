@@ -24,6 +24,24 @@ public sealed class ReleaseContractTests
     }
 
     [Fact]
+    public void Installer_offers_a_safe_opt_in_ollama_install_only_when_missing()
+    {
+        var installer = File.ReadAllText(RepositoryFile("installer", "Whispdows.iss"));
+
+        Assert.Contains("Name: \"ollama\"", installer);
+        Assert.Contains("Flags: unchecked; Check: ShouldOfferOllamaInstall", installer);
+        Assert.Contains("{localappdata}\\Programs\\Ollama\\ollama.exe", installer);
+        Assert.Contains("FileSearch('ollama.exe', GetEnv('PATH'))", installer);
+        Assert.Contains("Result := not IsOllamaInstalled", installer);
+        Assert.Contains("WizardIsTaskSelected('ollama')", installer);
+        Assert.Contains("install --id Ollama.Ollama --exact --source winget --scope user --silent", installer);
+        Assert.Contains("--accept-package-agreements --accept-source-agreements", installer);
+        Assert.Contains("ResultCode <> 0", installer);
+        Assert.DoesNotContain("ollama pull", installer, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("[UninstallRun]", installer);
+    }
+
+    [Fact]
     public void Release_build_is_self_contained_and_checks_the_model_and_native_runtime()
     {
         var buildScript = File.ReadAllText(

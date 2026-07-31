@@ -11,6 +11,7 @@ public sealed class TrayMenu : IDisposable
     private readonly Icon _processingIcon;
     private readonly Icon _errorIcon;
     private readonly Forms.NotifyIcon _notifyIcon;
+    private readonly Forms.ToolStripMenuItem _statusItem;
     private readonly Forms.ToolStripMenuItem _enabledItem;
     private readonly Forms.ToolStripMenuItem _launchAtLoginItem;
     private readonly Action<bool> _onEnabledChanged;
@@ -41,14 +42,19 @@ public sealed class TrayMenu : IDisposable
         _processingIcon = LoadIcon("whispdows-tray-processing.ico");
         _errorIcon = LoadIcon("whispdows-tray-error.ico");
 
-        _enabledItem = new Forms.ToolStripMenuItem("Enabled")
+        _statusItem = new Forms.ToolStripMenuItem("Disabled")
+        {
+            Enabled = false
+        };
+
+        _enabledItem = new Forms.ToolStripMenuItem("&Enabled")
         {
             CheckOnClick = true,
             Checked = enabled
         };
         _enabledItem.CheckedChanged += EnabledItemOnCheckedChanged;
 
-        _launchAtLoginItem = new Forms.ToolStripMenuItem("Launch at login")
+        _launchAtLoginItem = new Forms.ToolStripMenuItem("&Launch at login")
         {
             CheckOnClick = true,
             Checked = launchAtLogin
@@ -56,15 +62,19 @@ public sealed class TrayMenu : IDisposable
         _launchAtLoginItem.CheckedChanged += LaunchAtLoginItemOnCheckedChanged;
 
         var menu = new Forms.ContextMenuStrip();
+        menu.Items.Add(_statusItem);
+        menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(_enabledItem);
         menu.Items.Add(_launchAtLoginItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(CreateActionItem("Settings…", onOpenSettingsEditorRequested));
-        menu.Items.Add(CreateActionItem("Reload settings", onReloadRequested));
-        menu.Items.Add(CreateActionItem("Open settings folder", onOpenSettingsRequested));
-        menu.Items.Add(CreateActionItem("Open README", onOpenReadmeRequested));
+        var settingsItem = CreateActionItem("&Settings…", onOpenSettingsEditorRequested);
+        settingsItem.Font = new Font(menu.Font, FontStyle.Bold);
+        menu.Items.Add(settingsItem);
+        menu.Items.Add(CreateActionItem("&Reload settings", onReloadRequested));
+        menu.Items.Add(CreateActionItem("Open settings &folder", onOpenSettingsRequested));
+        menu.Items.Add(CreateActionItem("&Help / Documentation", onOpenReadmeRequested));
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(CreateActionItem("Exit", onExitRequested));
+        menu.Items.Add(CreateActionItem("E&xit Whispdows", onExitRequested));
 
         _notifyIcon = new Forms.NotifyIcon
         {
@@ -73,6 +83,8 @@ public sealed class TrayMenu : IDisposable
             Text = "Whispdows",
             Visible = true
         };
+        _notifyIcon.DoubleClick += (_, _) => onOpenSettingsEditorRequested();
+        UpdateIcon();
     }
 
     public void ApplySettings(bool enabled, bool launchAtLogin)
@@ -170,18 +182,32 @@ public sealed class TrayMenu : IDisposable
             return;
         }
 
-        _notifyIcon.Icon = (!_enabledItem.Checked
-                || _dictationState == DictationState.Disabled)
-            ? _disabledIcon
-            : _dictationState switch
-            {
-                DictationState.Recording => _listeningIcon,
-                DictationState.Transcribing
-                    or DictationState.Cleaning
-                    or DictationState.Pasting => _processingIcon,
-                DictationState.Error => _errorIcon,
-                _ => _enabledIcon
-            };
+        var effectiveState = !_enabledItem.Checked
+            ? DictationState.Disabled
+            : _dictationState;
+        var stateLabel = effectiveState switch
+        {
+            DictationState.Disabled => "Disabled",
+            DictationState.Recording => "Listening",
+            DictationState.Transcribing => "Transcribing",
+            DictationState.Cleaning => "Cleaning transcript",
+            DictationState.Pasting => "Pasting",
+            DictationState.Error => "Needs attention",
+            _ => "Ready"
+        };
+
+        _notifyIcon.Icon = effectiveState switch
+        {
+            DictationState.Disabled => _disabledIcon,
+            DictationState.Recording => _listeningIcon,
+            DictationState.Transcribing
+                or DictationState.Cleaning
+                or DictationState.Pasting => _processingIcon,
+            DictationState.Error => _errorIcon,
+            _ => _enabledIcon
+        };
+        _statusItem.Text = stateLabel;
+        _notifyIcon.Text = $"Whispdows — {stateLabel}";
     }
 
     private static Icon LoadIcon(string fileName)

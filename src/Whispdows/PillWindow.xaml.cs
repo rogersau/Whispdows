@@ -32,6 +32,7 @@ public partial class PillWindow : Window, IRecordingPill
     private static readonly IntPtr HwndTopmost = new(-1);
 
     private readonly record struct PillVisual(string Indicator, string Message, string Color);
+    private nint _targetWindow;
 
     public PillWindow()
     {
@@ -57,10 +58,20 @@ public partial class PillWindow : Window, IRecordingPill
         Indicator.Text = visual.Indicator;
         Indicator.Foreground = new System.Windows.Media.SolidColorBrush((System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(visual.Color));
         Message.Text = visual.Message;
+
+        if (IsVisible)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                UpdateLayout();
+                PositionOnTargetMonitor(_targetWindow);
+            });
+        }
     }
 
     public void ShowForTargetWindow(nint targetWindow)
     {
+        _targetWindow = targetWindow;
         if (!IsVisible)
         {
             Show();
@@ -97,10 +108,16 @@ public partial class PillWindow : Window, IRecordingPill
         }
 
         var currentStyle = GetWindowLongPtr(source.Handle, GwlExStyle).ToInt64();
+        var additionalStyle = WsExNoActivate | WsExTransparent;
+        if (!ShowInTaskbar)
+        {
+            additionalStyle |= WsExToolWindow;
+        }
+
         SetWindowLongPtr(
             source.Handle,
             GwlExStyle,
-            new IntPtr(currentStyle | WsExNoActivate | WsExToolWindow | WsExTransparent));
+            new IntPtr(currentStyle | additionalStyle));
         source.AddHook(WindowProcedure);
     }
 

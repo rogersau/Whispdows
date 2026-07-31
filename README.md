@@ -14,7 +14,7 @@
 
 Whispdows is a small Windows tray application for hold-to-talk AI dictation. Hold `RightCtrl`, speak, release, and the cleaned result is pasted into the field that was active when you started.
 
-It is deliberately quiet: no editor window, no browser extension, no background service, no transcript history, and no runtime model download.
+It is deliberately quiet: no editor window, no browser extension, no Whispdows background service, no transcript history, and no silent model download.
 
 ## The loop
 
@@ -34,6 +34,7 @@ flowchart LR
 | --- | --- |
 | Hold-to-talk | A global shortcut starts recording and release ends it. `Escape` cancels. |
 | Local first | Whisper `small.en` runs on-device when local transcription is selected. |
+| Tiny local cleanup | An optional Ollama model can polish transcripts on-device without a cloud API key. |
 | Cloud when useful | Azure Speech, OpenAI, Groq, and Azure OpenAI are supported through explicit settings. |
 | Natural cleanup | Filler words, false starts, punctuation, and obvious transcription mistakes are cleaned without summarising your words. |
 | Corrections survive | Clear spoken corrections such as “actually, use Tuesday” can replace the superseded phrase. |
@@ -50,26 +51,27 @@ flowchart LR
 - .NET 10 SDK
 - PowerShell
 - A microphone
+- Optional: [Ollama for Windows](https://docs.ollama.com/windows) for local AI cleanup (the packaged installer can offer to install it)
 
 ### Run from source
 
 ```powershell
 git clone https://github.com/rogersau/Whispdows.git
 Set-Location Whispdows
+```
 
-If you are renaming an existing Dictate installation, copy these files manually
-before launching Whispdows for the first time:
+If you are renaming an existing Dictate installation, copy these files manually before launching Whispdows for the first time:
 
 ```powershell
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Whispdows"
 Copy-Item "$env:LOCALAPPDATA\Dictate\settings.json" "$env:LOCALAPPDATA\Whispdows\settings.json"
 ```
 
-Open **Settings…** after launch and enter provider keys there. If a legacy
-`.env` is already present under `%LOCALAPPDATA%\Whispdows`, Whispdows imports it
-once, encrypts the values for the current Windows user, and clears the plaintext
-values.
+If a legacy `.env` file exists under `%LOCALAPPDATA%\Whispdows`, Whispdows imports it once, encrypts the values for the current Windows user, and clears the plaintext file.
 
+Then download the pinned Whisper model and run the app:
+
+```powershell
 .\scripts\Get-WhisperModel.ps1
 dotnet test .\Whispdows.sln --configuration Release
 dotnet run --project .\src\Whispdows\Whispdows.csproj
@@ -94,6 +96,8 @@ artifacts\installer\Whispdows-Setup.exe
 
 The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Whispdows`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Whispdows` so upgrades do not overwrite them.
 
+If Ollama is not already installed, the installer offers an unchecked **Install Ollama for local AI cleanup** task. Selecting it installs the official `Ollama.Ollama` package through Windows Package Manager. The task is hidden when `ollama.exe` is already available, does not download a model, and never removes Ollama when Whispdows is uninstalled. If Windows Package Manager is unavailable, the installer offers to open Ollama's official Windows instructions instead.
+
 Every push to `master` also runs the [Package Windows app](https://github.com/rogersau/Whispdows/actions/workflows/package-windows.yml) workflow. Download `Whispdows-Setup.exe` from the workflow run's artifact to install the latest build.
 
 ## Configure it
@@ -105,11 +109,7 @@ Whispdows creates these files on first start:
 %LOCALAPPDATA%\Whispdows\secrets.dat
 ```
 
-The complete non-secret settings shape is in [`settings.example.json`](settings.example.json).
-`secrets.dat` is encrypted with Windows DPAPI for the current user and must not
-be edited manually. Use the **API keys** section in **Settings…** to add,
-replace, or clear OpenAI, Groq, and Azure keys. Keys are never displayed in the
-editor or written to `settings.json`.
+The complete checked-in settings shape is in [`settings.example.json`](settings.example.json). `secrets.dat` is encrypted with Windows DPAPI for the current user and must not be edited manually. Use the **API keys** section in **Settings…** to add, replace, or clear OpenAI, Groq, and Azure keys. Keys are never displayed in the editor or written to `settings.json`.
 
 ### Transcription providers
 
@@ -129,9 +129,47 @@ Cleanup is independent of transcription:
 | Provider | Behavior |
 | --- | --- |
 | `basic` | Local, deterministic cleanup for whitespace, fillers, and sentence casing. |
+| `ollama` | Send only the transcript and cleanup instructions to an Ollama model on this PC. |
 | `none` | Paste the transcript without cleanup. |
 | `openai` / `groq` | Send the transcript to a Chat Completions model. |
 | `azure-openai` | Send the transcript to an Azure OpenAI deployment through the Responses API. |
+
+#### Tiny local AI cleanup
+
+Whispdows supports Ollama through its local OpenAI-compatible endpoint. It accepts only a loopback address (`127.0.0.1`, `localhost`, or `::1`) and sends no API key. The desktop application never starts Ollama or downloads models; the packaged Whispdows installer can optionally install the Ollama runtime when it is missing.
+
+Install Ollama, then pull one model:
+
+```powershell
+# Recommended balance: about 815 MB in Ollama
+ollama pull gemma3:1b
+
+# Smallest preset: about 292 MB, with a larger quality trade-off
+ollama pull gemma3:270m
+
+# Qwen alternatives
+ollama pull qwen2.5:0.5b
+ollama pull qwen2.5:1.5b
+ollama pull qwen3:1.7b
+```
+
+Gemma 3 1B is the default recommendation for short transcript edits. The 270M model is exceptionally small but is more likely to miss a false start or meaning-sensitive correction. Qwen remains fully supported: select a preset in Settings or enter any installed model name.
+
+Choose **Local AI model (Ollama)** in Settings, or configure it directly:
+
+```json
+{
+  "cleanup": {
+    "provider": "ollama",
+    "localModel": "gemma3:1b",
+    "localEndpoint": "http://127.0.0.1:11434/v1",
+    "style": "auto",
+    "fallbackToBasic": true
+  }
+}
+```
+
+Whispdows uses Ollama's `/v1/chat/completions` compatibility route, disables streaming, and limits the response size. If Ollama is stopped, the model is missing, the response is malformed, or the local request times out, `fallbackToBasic` preserves the transcript through deterministic cleanup.
 
 For Azure OpenAI, use the Azure resource's v1 endpoint and deployment name:
 
@@ -154,11 +192,11 @@ For Azure OpenAI, use the Azure resource's v1 endpoint and deployment name:
 
 The Azure OpenAI cleanup provider reuses `AZURE_SPEECH_KEY`, so a Speech resource key can serve both configured Azure operations when the resource supports them. The request sets `store` to `false`; the app still sends the raw transcript and fixed cleanup instructions to Azure for processing.
 
-When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malformed response falls back to deterministic local cleanup so a successful transcript is not discarded.
+When `fallbackToBasic` is enabled, a missing key or model, timeout, connection failure, API error, or malformed response falls back to deterministic local cleanup so a successful transcript is not discarded.
 
 ### Settings window
 
-Right-click the tray icon and choose **Settings…** to edit the configuration without opening JSON. The editor can record a key or key combination for the hold-to-talk shortcut, offers a dropdown of active capture devices, groups the transcription, cleanup, paste, and API-key controls, and shows provider-specific fields only when they are relevant. **Save & Apply** validates the complete candidate, swaps the runtime pipeline, persists the settings and encrypted keys, and rolls back to the last working configuration if anything fails.
+Double-click the tray icon, or right-click it and choose **Settings…**, to edit the configuration without opening JSON. The editor can record a key or key combination for the hold-to-talk shortcut, offers a dropdown of active capture devices, groups the hotkey, audio, transcription, cleanup, paste, and API-key controls, and shows provider-specific fields only when they are relevant. **Save & Apply** validates the complete candidate, swaps the runtime pipeline, persists the settings and encrypted keys, and rolls back to the last working configuration if anything fails.
 
 **Reload settings** remains available for changes made directly in `settings.json` or the encrypted key store, while **Open settings folder** is useful for inspecting the non-secret settings file and logs.
 
@@ -188,6 +226,7 @@ Whispdows uses a global low-level keyboard hook and `SendInput` for paste. It do
 
 - Audio and transcripts are held in memory and released after processing or cancellation.
 - With local transcription plus `basic` or `none` cleanup, no audio or transcript is sent over the network.
+- Ollama cleanup sends the transcript and fixed instructions only to the configured loopback endpoint, so they do not leave the PC.
 - Cloud transcription sends the completed WAV recording to the selected provider.
 - Cloud cleanup sends only the transcript and fixed cleanup instructions—not surrounding app content, clipboard context, or window contents.
 - There is no telemetry, analytics, remote logging, crash reporting, or transcript history.
@@ -203,6 +242,7 @@ src/Whispdows/
 ├── AudioRecorder.cs          WASAPI capture and WAV output
 ├── Transcribers.cs            local Whisper pipeline and orchestration
 ├── CloudProviders.cs          OpenAI, Groq, and Azure OpenAI clients
+├── OllamaTextCleaner.cs       loopback-only local AI cleanup adapter
 ├── AzureSpeechTranscriber.cs  Azure Speech client
 ├── TextCleaners.cs            deterministic cleanup
 ├── TextInserter.cs            clipboard-safe focus-aware paste

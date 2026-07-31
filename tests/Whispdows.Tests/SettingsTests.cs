@@ -18,6 +18,8 @@ public sealed class SettingsTests
         Assert.Equal("gpt-4o-transcribe", settings.Transcription.OpenaiModel);
         Assert.Equal("en-US", settings.Transcription.AzureLocale);
         Assert.Equal("basic", settings.Cleanup.Provider);
+        Assert.Equal("gemma3:1b", settings.Cleanup.LocalModel);
+        Assert.Equal("http://127.0.0.1:11434/v1", settings.Cleanup.LocalEndpoint);
         Assert.True(File.Exists(sandbox.Paths.SettingsFile));
 
         var json = File.ReadAllText(sandbox.Paths.SettingsFile);
@@ -74,6 +76,31 @@ public sealed class SettingsTests
             () => sandbox.Loader.Save(settings));
 
         Assert.Contains("cleanup.model", exception.Message);
+    }
+
+    [Fact]
+    public void Save_validates_local_ollama_cleanup_without_network_access()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Cleanup.Provider = "ollama";
+        settings.Cleanup.LocalModel = string.Empty;
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+        Assert.Contains("cleanup.localModel", exception.Message);
+
+        settings.Cleanup.LocalModel = "gemma3:1b";
+        settings.Cleanup.LocalEndpoint = "https://example.com/v1";
+        exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+        Assert.Contains("cleanup.localEndpoint", exception.Message);
+
+        settings.Cleanup.LocalEndpoint = "http://127.0.0.1:11434/v1";
+        sandbox.Loader.Save(settings);
+        var loaded = sandbox.Loader.LoadOrCreate();
+        Assert.Equal("ollama", loaded.Cleanup.Provider);
+        Assert.Equal("gemma3:1b", loaded.Cleanup.LocalModel);
     }
 
     [Fact]
