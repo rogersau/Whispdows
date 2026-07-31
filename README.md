@@ -90,6 +90,8 @@ artifacts\installer\Whispdows-Setup.exe
 
 The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Whispdows`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Whispdows` so upgrades do not overwrite them.
 
+Every push to `master` also runs the [Package Windows app](https://github.com/rogersau/Whispdows/actions/workflows/package-windows.yml) workflow. Download `Whispdows-Setup.exe` from the workflow run's artifact to install the latest build.
+
 ## Configure it
 
 Whispdows creates these files on first start:

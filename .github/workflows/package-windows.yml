@@ -1,0 +1,50 @@
+name: Package Windows app
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-master
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Package Whispdows
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Run tests
+        shell: pwsh
+        run: dotnet test .\Whispdows.sln --configuration Release --nologo --verbosity minimal
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          APP_VERSION: 0.1.${{ github.run_number }}
+        run: .\scripts\Build-Release.ps1 -Version $env:APP_VERSION
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Whispdows-windows-x64-${{ github.sha }}
+          path: artifacts/installer/Whispdows-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
