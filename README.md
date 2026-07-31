@@ -1,9 +1,6 @@
 # Dictate
 
-Dictate is a small Windows tray application for hold-to-talk AI dictation. All five implementation slices are present: the Windows tray shell, global hold shortcut, WASAPI microphone capture, local or cloud transcription, deterministic or cloud cleanup, focus-safe clipboard paste, rolling privacy-safe logs, and a per-user installer.
-
-The local path works without network access once the model is present. OpenAI, Groq, and Azure Speech are optional and are never selected automatically.
-
+Dictate is a small Windows tray application for hold-to-talk AI dictation. All five implementation slices are present: the Windows tray shell, global hold shortcut, WASAPI microphone capture, local or cloud transcription, deterministic or cloud cleanup, focus-safe clipboard paste, rolling privacy-safe logs, and a per-user installer.d
 ## Build and run
 
 The project targets Windows 11 x64 and .NET 10:
