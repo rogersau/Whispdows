@@ -1,0 +1,13 @@
+# Build output
+**/bin/
+**/obj/
+.vs/
+
+# User-specific files
+*.user
+*.suo
+.env
+!.env.example
+
+# The local Whisper model is supplied separately in a later slice.
+models/*.bin

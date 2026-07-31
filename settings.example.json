@@ -1,0 +1,31 @@
+{
+  "enabled": true,
+  "hotkey": {
+    "shortcut": "RightCtrl",
+    "suppress": true
+  },
+  "audio": {
+    "deviceId": "default",
+    "maxSeconds": 90
+  },
+  "transcription": {
+    "provider": "local",
+    "language": "en",
+    "fallbackToLocal": true,
+    "localModelPath": "models/ggml-small.en.bin",
+    "localThreads": 0,
+    "openaiModel": "gpt-transcribe",
+    "groqModel": "whisper-large-v3-turbo"
+  },
+  "cleanup": {
+    "provider": "basic",
+    "model": "",
+    "style": "auto",
+    "fallbackToBasic": true
+  },
+  "paste": {
+    "restoreClipboard": true,
+    "restoreDelayMs": 175
+  },
+  "launchAtLogin": false
+}
