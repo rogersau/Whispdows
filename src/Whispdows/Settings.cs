@@ -12,6 +12,7 @@ public sealed class SettingsPaths
         SettingsDirectory = Path.GetFullPath(settingsDirectory);
         ApplicationDirectory = Path.GetFullPath(applicationDirectory);
         SettingsFile = Path.Combine(SettingsDirectory, "settings.json");
+        SecretsFile = Path.Combine(SettingsDirectory, "secrets.dat");
         EnvironmentFile = Path.Combine(SettingsDirectory, ".env");
         LogDirectory = Path.Combine(SettingsDirectory, "logs");
         ReadmePath = Path.Combine(ApplicationDirectory, "README.md");
@@ -20,6 +21,8 @@ public sealed class SettingsPaths
     public string SettingsDirectory { get; }
 
     public string SettingsFile { get; }
+
+    public string SecretsFile { get; }
 
     public string EnvironmentFile { get; }
 

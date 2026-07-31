@@ -129,7 +129,6 @@ foreach ($requiredFile in @(
     (Join-Path $publishDirectory 'Whispdows.exe'),
     (Join-Path $publishDirectory 'README.md'),
     (Join-Path $publishDirectory 'settings.example.json'),
-    (Join-Path $publishDirectory '.env.example'),
     $publishedModel,
     $nativeRuntimeFiles
 )) {

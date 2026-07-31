@@ -32,7 +32,6 @@
   <ItemGroup>
     <None Include="..\..\README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\settings.example.json" Link="settings.example.json" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\.env.example" Link=".env.example" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\models\ggml-small.en.bin"
              Link="models\ggml-small.en.bin"
              Condition="Exists('..\..\models\ggml-small.en.bin')"

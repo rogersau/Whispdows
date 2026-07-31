@@ -63,8 +63,12 @@ before launching Whispdows for the first time:
 ```powershell
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Whispdows"
 Copy-Item "$env:LOCALAPPDATA\Dictate\settings.json" "$env:LOCALAPPDATA\Whispdows\settings.json"
-Copy-Item "$env:LOCALAPPDATA\Dictate\.env" "$env:LOCALAPPDATA\Whispdows\.env"
 ```
+
+Open **Settings…** after launch and enter provider keys there. If a legacy
+`.env` is already present under `%LOCALAPPDATA%\Whispdows`, Whispdows imports it
+once, encrypts the values for the current Windows user, and clears the plaintext
+values.
 
 .\scripts\Get-WhisperModel.ps1
 dotnet test .\Whispdows.sln --configuration Release
@@ -98,18 +102,14 @@ Whispdows creates these files on first start:
 
 ```text
 %LOCALAPPDATA%\Whispdows\settings.json
-%LOCALAPPDATA%\Whispdows\.env
+%LOCALAPPDATA%\Whispdows\secrets.dat
 ```
 
-The complete checked-in settings shape is in [`settings.example.json`](settings.example.json). The secrets file is intentionally simple and is ignored by Git:
-
-```dotenv
-OPENAI_API_KEY=
-GROQ_API_KEY=
-AZURE_SPEECH_KEY=
-```
-
-Only add the keys for providers you select. Never commit a real key.
+The complete non-secret settings shape is in [`settings.example.json`](settings.example.json).
+`secrets.dat` is encrypted with Windows DPAPI for the current user and must not
+be edited manually. Use the **API keys** section in **Settings…** to add,
+replace, or clear OpenAI, Groq, and Azure keys. Keys are never displayed in the
+editor or written to `settings.json`.
 
 ### Transcription providers
 
@@ -158,9 +158,9 @@ When `fallbackToBasic` is enabled, a missing key, timeout, API error, or malform
 
 ### Settings window
 
-Right-click the tray icon and choose **Settings…** to edit the configuration without opening JSON. The editor groups the hotkey, audio, transcription, cleanup, and paste controls; provider-specific fields appear only when they are relevant. **Save & Apply** validates the complete candidate, swaps the runtime pipeline, persists the file, and rolls back to the last working configuration if anything fails. API keys remain in `.env` and are never displayed in the editor.
+Right-click the tray icon and choose **Settings…** to edit the configuration without opening JSON. The editor can record a key or key combination for the hold-to-talk shortcut, offers a dropdown of active capture devices, groups the transcription, cleanup, paste, and API-key controls, and shows provider-specific fields only when they are relevant. **Save & Apply** validates the complete candidate, swaps the runtime pipeline, persists the settings and encrypted keys, and rolls back to the last working configuration if anything fails.
 
-**Reload settings** remains available for changes made directly in `settings.json` or `.env`, while **Open settings folder** is useful for inspecting those files.
+**Reload settings** remains available for changes made directly in `settings.json` or the encrypted key store, while **Open settings folder** is useful for inspecting the non-secret settings file and logs.
 
 ## Everyday behavior
 
@@ -192,7 +192,7 @@ Whispdows uses a global low-level keyboard hook and `SendInput` for paste. It do
 - Cloud cleanup sends only the transcript and fixed cleanup instructions—not surrounding app content, clipboard context, or window contents.
 - There is no telemetry, analytics, remote logging, crash reporting, or transcript history.
 - Local logs contain state, durations, provider names, and exception types only. They do not contain audio, transcript text, clipboard contents, request bodies, API keys, or authorization headers.
-- API keys live in the user-owned plain-text `.env` file, which is excluded from Git.
+- API keys are stored in `secrets.dat`, encrypted with Windows DPAPI using the current user profile; they are not written to `settings.json` or logs.
 
 The unsigned personal installer may trigger Microsoft Defender SmartScreen. Build from source or code-sign the release where practical; do not disable Defender, SmartScreen, or antivirus protection globally.
 

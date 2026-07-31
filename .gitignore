@@ -10,6 +10,7 @@ tmp/
 *.suo
 .env
 !.env.example
+secrets.dat
 
 # The local Whisper model is supplied separately in a later slice.
 models/*.bin

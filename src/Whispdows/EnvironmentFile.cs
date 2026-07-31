@@ -10,6 +10,7 @@ public sealed class ProviderSecrets
 
     public ProviderSecrets(IReadOnlyDictionary<string, string> values)
     {
+        ArgumentNullException.ThrowIfNull(values);
         _values = new ReadOnlyDictionary<string, string>(
             new Dictionary<string, string>(values, StringComparer.Ordinal));
     }
@@ -21,6 +22,34 @@ public sealed class ProviderSecrets
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         return _values.TryGetValue(name, out var value) ? value : string.Empty;
+    }
+
+    public bool Has(string name)
+    {
+        return !string.IsNullOrWhiteSpace(Get(name));
+    }
+
+    public ProviderSecrets WithUpdates(IReadOnlyDictionary<string, string?> updates)
+    {
+        ArgumentNullException.ThrowIfNull(updates);
+
+        var values = new Dictionary<string, string>(_values, StringComparer.Ordinal);
+        foreach (var update in updates)
+        {
+            if (string.IsNullOrWhiteSpace(update.Key))
+            {
+                throw new ArgumentException("A secret name must not be empty.", nameof(updates));
+            }
+
+            values[update.Key] = update.Value ?? string.Empty;
+        }
+
+        return new ProviderSecrets(values);
+    }
+
+    internal IReadOnlyDictionary<string, string> CopyValues()
+    {
+        return new Dictionary<string, string>(_values, StringComparer.Ordinal);
     }
 }
 

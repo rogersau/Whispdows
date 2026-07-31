@@ -8,7 +8,7 @@ public partial class App : System.Windows.Application
 {
     private readonly SettingsPaths _paths = SettingsPaths.CreateDefault();
     private readonly SettingsLoader _settingsLoader;
-    private readonly EnvironmentFileLoader _environmentFileLoader;
+    private readonly SecureSecretsStore _secretsStore;
     private readonly StartupRegistration _startupRegistration;
     private AppSettings _settings = AppSettings.CreateDefault();
     private ProviderSecrets _secrets = ProviderSecrets.Empty;
@@ -22,7 +22,7 @@ public partial class App : System.Windows.Application
     public App()
     {
         _settingsLoader = new SettingsLoader(_paths);
-        _environmentFileLoader = new EnvironmentFileLoader(_paths.EnvironmentFile);
+        _secretsStore = new SecureSecretsStore(_paths.SecretsFile, _paths.EnvironmentFile);
         _startupRegistration = new StartupRegistration("Whispdows");
     }
 
@@ -51,7 +51,7 @@ public partial class App : System.Windows.Application
         try
         {
             _settings = _settingsLoader.LoadOrCreate();
-            _secrets = _environmentFileLoader.LoadOrCreate();
+            _secrets = _secretsStore.LoadOrCreate();
             ReconcileLaunchAtLogin();
 
             _pillWindow = new PillWindow();
@@ -210,7 +210,7 @@ public partial class App : System.Windows.Application
         try
         {
             var loaded = _settingsLoader.LoadOrCreate();
-            var loadedSecrets = _environmentFileLoader.LoadOrCreate();
+            var loadedSecrets = _secretsStore.LoadOrCreate();
             await ApplySettingsAsync(loaded, loadedSecrets, "Settings reloaded");
         }
         catch (Exception exception)
@@ -220,11 +220,12 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private async Task<string?> ApplySettingsFromEditorAsync(AppSettings settings)
+    private async Task<string?> ApplySettingsFromEditorAsync(
+        AppSettings settings,
+        ProviderSecrets secrets)
     {
         try
         {
-            var secrets = _environmentFileLoader.LoadOrCreate();
             return await ApplySettingsAsync(settings, secrets, "Settings applied");
         }
         catch (Exception exception)
@@ -250,6 +251,8 @@ public partial class App : System.Windows.Application
         var previousRegistration = _startupRegistration.IsEnabled;
         DictationPipeline? candidatePipeline = null;
         var pipelineReplaced = false;
+        var secretsPersisted = false;
+        var settingsPersisted = false;
 
         try
         {
@@ -267,7 +270,10 @@ public partial class App : System.Windows.Application
                 EnableRuntime(loaded);
             }
 
+            _secretsStore.Save(loadedSecrets);
+            secretsPersisted = true;
             _settingsLoader.Save(loaded);
+            settingsPersisted = true;
             _settings = loaded;
             _secrets = loadedSecrets;
             _trayMenu?.ApplySettings(_settings.Enabled, _startupRegistration.IsEnabled);
@@ -277,6 +283,30 @@ public partial class App : System.Windows.Application
         catch (Exception exception)
         {
             _logger.LogException("settings-apply", exception);
+            if (settingsPersisted)
+            {
+                try
+                {
+                    _settingsLoader.Save(previousSettings);
+                }
+                catch (Exception restoreSettingsFailure)
+                {
+                    _logger.LogException("settings-disk-rollback", restoreSettingsFailure);
+                }
+            }
+
+            if (secretsPersisted)
+            {
+                try
+                {
+                    _secretsStore.Save(previousSecrets);
+                }
+                catch (Exception restoreSecretsFailure)
+                {
+                    _logger.LogException("secrets-disk-rollback", restoreSecretsFailure);
+                }
+            }
+
             candidatePipeline?.Dispose();
             Exception? rollbackException = null;
             DictationPipeline? rollbackPipeline = null;
@@ -558,6 +588,7 @@ public partial class App : System.Windows.Application
 
             _settingsWindow = new SettingsWindow(
                 _settings,
+                _secrets,
                 ApplySettingsFromEditorAsync);
             _settingsWindow.Closed += SettingsWindowOnClosed;
             _settingsWindow.Show();

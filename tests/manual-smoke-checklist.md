@@ -6,7 +6,7 @@ Use a non-elevated Windows 11 x64 session and the packaged installer.
 
 - Install without a UAC elevation prompt.
 - Confirm `Whispdows.exe`, the .NET runtime, `runtimes\win-x64\whisper.dll`, and `models\ggml-small.en.bin` are under `%LOCALAPPDATA%\Programs\Whispdows`.
-- Confirm an existing `%LOCALAPPDATA%\Whispdows\settings.json` and `.env` survive an upgrade.
+- Confirm an existing `%LOCALAPPDATA%\Whispdows\settings.json` and `secrets.dat` survive an upgrade; a legacy `.env` is migrated and cleared on first launch.
 - Confirm the optional launch-at-login task creates a per-user startup entry.
 - Exit from the tray and confirm the pill closes, microphone capture ends, and the global shortcut is released.
 - Uninstall once preserving user data, then again choosing explicit user-data removal.
