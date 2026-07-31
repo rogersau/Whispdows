@@ -1,5 +1,9 @@
 {
   "enabled": true,
+  "features": {
+    "transcribe": true,
+    "meetingNotes": true
+  },
   "hotkey": {
     "shortcut": "RightCtrl",
     "suppress": true
@@ -29,6 +33,20 @@
   "paste": {
     "restoreClipboard": true,
     "restoreDelayMs": 175
+  },
+  "meetingNotes": {
+    "outputDirectory": "~/MeetingNotes",
+    "transcriptionProvider": "auto",
+    "language": "en",
+    "localModelPath": "models/ggml-medium.en.bin",
+    "localThreads": 0,
+    "openaiTranscriptionModel": "gpt-4o-transcribe",
+    "groqTranscriptionModel": "whisper-large-v3-turbo",
+    "notesProvider": "auto",
+    "openaiNotesModel": "gpt-4.1-mini",
+    "groqNotesModel": "openai/gpt-oss-120b",
+    "ollamaEndpoint": "http://127.0.0.1:11434",
+    "ollamaModel": "llama3.2:3b"
   },
   "launchAtLogin": false
 }

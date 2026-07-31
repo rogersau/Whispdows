@@ -39,6 +39,37 @@ public sealed class StartupConfigurationTests
             StartupConfiguration.IsEnableCommand([argument]));
     }
 
+    [Theory]
+    [InlineData("--configure-features=transcribe", FeatureSelection.Transcribe)]
+    [InlineData("--configure-features=meeting-notes", FeatureSelection.MeetingNotes)]
+    [InlineData("--CONFIGURE-FEATURES=BOTH", FeatureSelection.Both)]
+    public void Installer_feature_command_is_parsed_explicitly(
+        string argument,
+        FeatureSelection expected)
+    {
+        Assert.True(FeatureConfiguration.TryParse([argument], out var selection));
+        Assert.Equal(expected, selection);
+    }
+
+    [Theory]
+    [InlineData(FeatureSelection.Transcribe, true, false)]
+    [InlineData(FeatureSelection.MeetingNotes, false, true)]
+    [InlineData(FeatureSelection.Both, true, true)]
+    public void Installer_feature_command_persists_the_selection(
+        FeatureSelection selection,
+        bool transcribe,
+        bool meetingNotes)
+    {
+        using var sandbox = new SettingsSandbox();
+        var loader = new SettingsLoader(sandbox.Paths);
+
+        FeatureConfiguration.Apply(loader, selection);
+
+        var settings = loader.LoadOrCreate();
+        Assert.Equal(transcribe, settings.Features.Transcribe);
+        Assert.Equal(meetingNotes, settings.Features.MeetingNotes);
+    }
+
     private sealed class FakeStartupRegistration : IStartupRegistration
     {
         public bool IsEnabled { get; private set; }

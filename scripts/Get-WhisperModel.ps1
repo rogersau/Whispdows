@@ -1,12 +1,22 @@
 [CmdletBinding()]
 param(
-    [string]$Destination = (Join-Path $PSScriptRoot '..\models\ggml-small.en.bin')
+    [ValidateSet('small.en', 'medium.en')]
+    [string]$Model = 'small.en',
+    [string]$Destination
 )
 
 $ErrorActionPreference = 'Stop'
 
-$modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin'
-$expectedSha1 = 'db8a495a91d927739e50b3fc1cc4c6b8f6c2d022'
+$modelFile = "ggml-$Model.bin"
+$modelUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$modelFile"
+$expectedSha1 = switch ($Model) {
+    'small.en' { 'db8a495a91d927739e50b3fc1cc4c6b8f6c2d022' }
+    'medium.en' { '8c30f0e44ce9560643ebd10bbe50cd20eafd3723' }
+}
+if ([string]::IsNullOrWhiteSpace($Destination)) {
+    $Destination = Join-Path $PSScriptRoot "..\models\$modelFile"
+}
+
 $resolvedDestination = [System.IO.Path]::GetFullPath($Destination)
 $destinationDirectory = Split-Path -Parent $resolvedDestination
 $temporaryPath = "$resolvedDestination.download"
@@ -18,7 +28,7 @@ if (Test-Path -LiteralPath $resolvedDestination) {
         return
     }
 
-    throw "A model exists at '$resolvedDestination' but its SHA-1 does not match the pinned small.en model."
+    throw "A model exists at '$resolvedDestination' but its SHA-1 does not match the pinned $Model model."
 }
 
 New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
@@ -52,4 +62,4 @@ if ($downloadedHash -ne $expectedSha1) {
 }
 
 Move-Item -LiteralPath $temporaryPath -Destination $resolvedDestination
-Write-Host "Downloaded and verified Whisper small.en model: $resolvedDestination"
+Write-Host "Downloaded and verified Whisper $Model model: $resolvedDestination"
