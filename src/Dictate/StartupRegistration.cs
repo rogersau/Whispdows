@@ -1,3 +1,4 @@
+using System.IO;
 using Microsoft.Win32;
 
 namespace Dictate;
@@ -32,7 +33,8 @@ public sealed class StartupRegistration : IStartupRegistration
         get
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: false);
-            return key?.GetValue(_valueName) is string value && !string.IsNullOrWhiteSpace(value);
+            return key?.GetValue(_valueName) is string value
+                && string.Equals(value, ExpectedValue, StringComparison.OrdinalIgnoreCase);
         }
     }
 
@@ -41,7 +43,12 @@ public sealed class StartupRegistration : IStartupRegistration
         if (!enabled)
         {
             using var existingKey = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
-            existingKey?.DeleteValue(_valueName, throwOnMissingValue: false);
+            if (existingKey?.GetValue(_valueName) is string value
+                && string.Equals(value, ExpectedValue, StringComparison.OrdinalIgnoreCase))
+            {
+                existingKey.DeleteValue(_valueName, throwOnMissingValue: false);
+            }
+
             return;
         }
 
@@ -51,6 +58,35 @@ public sealed class StartupRegistration : IStartupRegistration
             throw new InvalidOperationException("Windows did not allow access to the per-user startup key.");
         }
 
-        key.SetValue(_valueName, $"\"{_executablePath}\"", RegistryValueKind.String);
+        key.SetValue(_valueName, ExpectedValue, RegistryValueKind.String);
+    }
+
+    private string ExpectedValue => $"\"{Path.GetFullPath(_executablePath)}\"";
+}
+
+public static class StartupConfiguration
+{
+    public const string EnableCommand = "--enable-startup";
+
+    public static bool IsEnableCommand(IReadOnlyList<string> arguments)
+    {
+        return arguments.Count == 1
+            && string.Equals(
+                arguments[0],
+                EnableCommand,
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static void Enable(
+        SettingsLoader settingsLoader,
+        IStartupRegistration startupRegistration)
+    {
+        ArgumentNullException.ThrowIfNull(settingsLoader);
+        ArgumentNullException.ThrowIfNull(startupRegistration);
+
+        var settings = settingsLoader.LoadOrCreate();
+        settings.LaunchAtLogin = true;
+        settingsLoader.Save(settings);
+        startupRegistration.SetEnabled(true);
     }
 }

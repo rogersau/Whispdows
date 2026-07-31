@@ -38,6 +38,18 @@ public sealed class DictationControllerTests
         Assert.Equal(1, fixture.Transcriber.CallCount);
         Assert.Equal(1, fixture.Cleaner.CallCount);
         Assert.Equal(1, fixture.Inserter.CallCount);
+        Assert.Contains(
+            fixture.Logger.Durations,
+            entry => entry.Operation == "recording" && entry.Provider == "wasapi");
+        Assert.Contains(
+            fixture.Logger.Durations,
+            entry => entry.Operation == "transcription");
+        Assert.Contains(
+            fixture.Logger.Durations,
+            entry => entry.Operation == "cleanup");
+        Assert.Contains(
+            fixture.Logger.Durations,
+            entry => entry.Operation == "paste");
         Assert.NotNull(fixture.Recorder.LastRecording);
         Assert.Throws<ObjectDisposedException>(() => fixture.Recorder.LastRecording!.WavBytes);
     }
@@ -94,6 +106,9 @@ public sealed class DictationControllerTests
         Assert.Equal(DictationState.Error, fixture.Controller.State);
         Assert.Contains(PillState.Error, fixture.Pill.States);
         Assert.Equal("Microphone unavailable", fixture.Pill.LastErrorMessage);
+        Assert.Contains(
+            fixture.Logger.Exceptions,
+            entry => entry.Exception is AudioRecorderException);
     }
 
     [Fact]
@@ -130,15 +145,30 @@ public sealed class DictationControllerTests
         Assert.Contains(PillState.NoSpeechDetected, fixture.Pill.States);
     }
 
+    [Fact]
+    public async Task Logging_failures_do_not_interrupt_dictation()
+    {
+        using var fixture = new ControllerFixture(new ThrowingLogger());
+        fixture.Controller.Enable();
+
+        await fixture.Controller.HandleHotkeyEventAsync(HotkeyEvent.TriggerPressed);
+        await fixture.Controller.HandleHotkeyEventAsync(HotkeyEvent.TriggerReleased);
+
+        Assert.Equal(DictationState.Idle, fixture.Controller.State);
+        Assert.Equal(1, fixture.Inserter.CallCount);
+        Assert.Contains(PillState.Pasted, fixture.Pill.States);
+    }
+
     private sealed class ControllerFixture : IDisposable
     {
-        public ControllerFixture()
+        public ControllerFixture(IAppLogger? logger = null)
         {
             Recorder = new FakeAudioRecorder();
             Pill = new FakeRecordingPill();
             Transcriber = new FakeTranscriber();
             Cleaner = new FakeTextCleaner();
             Inserter = new FakeTextInserter();
+            Logger = new RecordingLogger();
             Controller = new DictationController(
                 Recorder,
                 Pill,
@@ -148,7 +178,8 @@ public sealed class DictationControllerTests
                     DeviceId = "default",
                     MaxSeconds = 3600
                 },
-                new DictationPipeline(Transcriber, Cleaner, Inserter));
+                new DictationPipeline(Transcriber, Cleaner, Inserter),
+                logger ?? Logger);
         }
 
         public FakeAudioRecorder Recorder { get; }
@@ -160,6 +191,8 @@ public sealed class DictationControllerTests
         public FakeTextCleaner Cleaner { get; }
 
         public FakeTextInserter Inserter { get; }
+
+        public RecordingLogger Logger { get; }
 
         public DictationController Controller { get; }
 
@@ -312,6 +345,56 @@ public sealed class DictationControllerTests
         public void HidePill()
         {
             Hidden = true;
+        }
+    }
+
+    private sealed class RecordingLogger : IAppLogger
+    {
+        public List<DictationState> States { get; } = [];
+
+        public List<(string Operation, string Provider, TimeSpan Duration)> Durations { get; } = [];
+
+        public List<(string Context, Exception Exception)> Exceptions { get; } = [];
+
+        public void LogState(DictationState state)
+        {
+            States.Add(state);
+        }
+
+        public void LogDuration(
+            string operation,
+            string provider,
+            TimeSpan duration)
+        {
+            Durations.Add((operation, provider, duration));
+        }
+
+        public void LogException(string context, Exception exception)
+        {
+            Exceptions.Add((context, exception));
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class ThrowingLogger : IAppLogger
+    {
+        public void LogState(DictationState state) =>
+            throw new IOException("Simulated log failure.");
+
+        public void LogDuration(
+            string operation,
+            string provider,
+            TimeSpan duration) =>
+            throw new IOException("Simulated log failure.");
+
+        public void LogException(string context, Exception exception) =>
+            throw new IOException("Simulated log failure.");
+
+        public void Dispose()
+        {
         }
     }
 }

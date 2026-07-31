@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 
 namespace Dictate;
@@ -31,6 +32,7 @@ public sealed class DictationController : IDisposable
     private readonly IAudioRecorder _audioRecorder;
     private readonly IRecordingPill _pill;
     private readonly Func<nint> _getForegroundWindow;
+    private readonly IAppLogger _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
     private AudioSettings _audioSettings;
@@ -46,13 +48,17 @@ public sealed class DictationController : IDisposable
         IRecordingPill pill,
         Func<nint> getForegroundWindow,
         AudioSettings audioSettings,
-        DictationPipeline pipeline)
+        DictationPipeline pipeline,
+        IAppLogger? logger = null)
     {
         _audioRecorder = audioRecorder;
         _pill = pill;
         _getForegroundWindow = getForegroundWindow;
         _audioSettings = CopyAudioSettings(audioSettings);
         _pipeline = pipeline;
+        _logger = new SafeAppLogger(
+            logger ?? NullAppLogger.Instance,
+            disposeInner: false);
         State = DictationState.Disabled;
     }
 
@@ -212,7 +218,11 @@ public sealed class DictationController : IDisposable
                 }
             }
 
-            EnterErrorLocked("Microphone unavailable", sessionIdentifier, exception.Message);
+            EnterErrorLocked(
+                "Microphone unavailable",
+                sessionIdentifier,
+                exception,
+                "recording-start");
         }
     }
 
@@ -231,6 +241,7 @@ public sealed class DictationController : IDisposable
         try
         {
             using var recording = await _audioRecorder.StopAsync(_shutdown.Token);
+            _logger.LogDuration("recording", "wasapi", recording.Duration);
             if (recording.Duration < MinimumRecordingDuration)
             {
                 CompleteWithoutSpeechLocked(sessionIdentifier);
@@ -238,9 +249,22 @@ public sealed class DictationController : IDisposable
             }
 
             using var audioStream = new MemoryStream(recording.WavBytes, writable: false);
-            var transcript = await _pipeline.Transcriber.TranscribeAsync(
-                audioStream,
-                _shutdown.Token);
+            var transcribeTimer = Stopwatch.StartNew();
+            string transcript;
+            try
+            {
+                transcript = await _pipeline.Transcriber.TranscribeAsync(
+                    audioStream,
+                    _shutdown.Token);
+            }
+            finally
+            {
+                _logger.LogDuration(
+                    "transcription",
+                    _pipeline.TranscriptionProvider,
+                    transcribeTimer.Elapsed);
+            }
+
             if (string.IsNullOrWhiteSpace(transcript))
             {
                 CompleteWithoutSpeechLocked(sessionIdentifier);
@@ -249,9 +273,22 @@ public sealed class DictationController : IDisposable
 
             TransitionTo(DictationState.Cleaning);
             _pill.SetState(PillState.Cleaning);
-            var cleanedText = await _pipeline.TextCleaner.CleanAsync(
-                transcript,
-                _shutdown.Token);
+            var cleanupTimer = Stopwatch.StartNew();
+            string cleanedText;
+            try
+            {
+                cleanedText = await _pipeline.TextCleaner.CleanAsync(
+                    transcript,
+                    _shutdown.Token);
+            }
+            finally
+            {
+                _logger.LogDuration(
+                    "cleanup",
+                    _pipeline.CleanupProvider,
+                    cleanupTimer.Elapsed);
+            }
+
             if (string.IsNullOrWhiteSpace(cleanedText))
             {
                 CompleteWithoutSpeechLocked(sessionIdentifier);
@@ -259,10 +296,20 @@ public sealed class DictationController : IDisposable
             }
 
             TransitionTo(DictationState.Pasting);
-            var insertionResult = await _pipeline.TextInserter.InsertAsync(
-                cleanedText,
-                _targetWindow,
-                _shutdown.Token);
+            var pasteTimer = Stopwatch.StartNew();
+            TextInsertionResult insertionResult;
+            try
+            {
+                insertionResult = await _pipeline.TextInserter.InsertAsync(
+                    cleanedText,
+                    _targetWindow,
+                    _shutdown.Token);
+            }
+            finally
+            {
+                _logger.LogDuration("paste", "clipboard", pasteTimer.Elapsed);
+            }
+
             _pill.SetState(insertionResult switch
             {
                 TextInsertionResult.Pasted => PillState.Pasted,
@@ -289,7 +336,11 @@ public sealed class DictationController : IDisposable
                 _ when State == DictationState.Cleaning => "Cleanup failed",
                 _ => "Transcription failed"
             };
-            EnterErrorLocked(shortMessage, sessionIdentifier, exception.Message);
+            EnterErrorLocked(
+                shortMessage,
+                sessionIdentifier,
+                exception,
+                State.ToString().ToLowerInvariant());
         }
     }
 
@@ -352,12 +403,14 @@ public sealed class DictationController : IDisposable
     private void EnterErrorLocked(
         string message,
         int sessionIdentifier,
-        string? detail = null)
+        Exception exception,
+        string context)
     {
         CancelMaximumDuration();
+        _logger.LogException(context, exception);
         TransitionTo(DictationState.Error);
         _pill.SetState(PillState.Error, message);
-        ErrorOccurred?.Invoke(detail ?? message);
+        ErrorOccurred?.Invoke(exception.Message);
         ScheduleErrorReset(sessionIdentifier);
     }
 
@@ -446,6 +499,7 @@ public sealed class DictationController : IDisposable
         }
 
         State = next;
+        _logger.LogState(State);
         StateChanged?.Invoke(State);
     }
 

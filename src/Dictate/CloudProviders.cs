@@ -69,7 +69,7 @@ public sealed class CloudProviderDefinition
     public override string ToString() => Name;
 }
 
-public sealed class OpenAiCompatibleTranscriber : ITranscriber
+public sealed class OpenAiCompatibleTranscriber : ITranscriber, IProviderComponent
 {
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
 
@@ -95,6 +95,8 @@ public sealed class OpenAiCompatibleTranscriber : ITranscriber
         _ownsHttpClient = httpClient is null;
         _timeout = timeout ?? DefaultTimeout;
     }
+
+    public string ProviderName => _provider.Name.ToLowerInvariant();
 
     public void ValidateConfiguration()
     {
@@ -219,7 +221,7 @@ public sealed class OpenAiCompatibleTranscriber : ITranscriber
     }
 }
 
-public sealed class FallbackTranscriber : ITranscriber
+public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
 {
     private readonly ITranscriber _primary;
     private readonly ITranscriber _fallback;
@@ -230,6 +232,9 @@ public sealed class FallbackTranscriber : ITranscriber
         _primary = primary;
         _fallback = fallback;
     }
+
+    public string ProviderName =>
+        (_primary as IProviderComponent)?.ProviderName ?? "cloud";
 
     public void ValidateConfiguration()
     {
@@ -294,7 +299,7 @@ public sealed class FallbackTranscriber : ITranscriber
     }
 }
 
-public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IDisposable
+public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
 {
     private const string SystemPrompt = """
         You clean voice dictation transcripts.
@@ -328,6 +333,8 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IDis
         _ownsHttpClient = httpClient is null;
         _timeout = timeout ?? DefaultTimeout;
     }
+
+    public string ProviderName => _provider.Name.ToLowerInvariant();
 
     public void ValidateConfiguration()
     {
@@ -452,7 +459,7 @@ public sealed class LlmTextCleaner : ITextCleaner, IConfigurationValidator, IDis
     }
 }
 
-public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator, IDisposable
+public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
 {
     private readonly ITextCleaner _primary;
     private readonly ITextCleaner _fallback;
@@ -463,6 +470,9 @@ public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator,
         _primary = primary;
         _fallback = fallback;
     }
+
+    public string ProviderName =>
+        (_primary as IProviderComponent)?.ProviderName ?? "cloud";
 
     public void ValidateConfiguration()
     {

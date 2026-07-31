@@ -7,7 +7,7 @@ public interface ITextCleaner
     Task<string> CleanAsync(string transcript, CancellationToken cancellationToken);
 }
 
-public sealed class BasicTextCleaner : ITextCleaner
+public sealed class BasicTextCleaner : ITextCleaner, IProviderComponent
 {
     private static readonly Regex RepeatedWhitespace =
         new(@"\s+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -29,6 +29,8 @@ public sealed class BasicTextCleaner : ITextCleaner
 
         _style = style;
     }
+
+    public string ProviderName => "basic";
 
     public Task<string> CleanAsync(string transcript, CancellationToken cancellationToken)
     {
@@ -99,8 +101,10 @@ public sealed class BasicTextCleaner : ITextCleaner
     }
 }
 
-public sealed class NoOpTextCleaner : ITextCleaner
+public sealed class NoOpTextCleaner : ITextCleaner, IProviderComponent
 {
+    public string ProviderName => "none";
+
     public Task<string> CleanAsync(string transcript, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

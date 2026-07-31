@@ -31,6 +31,12 @@ public sealed class DictationPipeline : IDisposable
 
     public ITextInserter TextInserter { get; }
 
+    public string TranscriptionProvider =>
+        (Transcriber as IProviderComponent)?.ProviderName ?? "custom";
+
+    public string CleanupProvider =>
+        (TextCleaner as IProviderComponent)?.ProviderName ?? "custom";
+
     public void ValidateConfiguration()
     {
         Transcriber.ValidateConfiguration();
@@ -61,7 +67,7 @@ public sealed class DictationPipeline : IDisposable
     }
 }
 
-public sealed class WhisperCppTranscriber : ITranscriber
+public sealed class WhisperCppTranscriber : ITranscriber, IProviderComponent
 {
     private readonly string _modelPath;
     private readonly string _language;
@@ -84,6 +90,8 @@ public sealed class WhisperCppTranscriber : ITranscriber
             ? Math.Clamp(Environment.ProcessorCount / 2, 1, 8)
             : configuredThreads;
     }
+
+    public string ProviderName => "local";
 
     public async Task<string> TranscribeAsync(
         Stream wavAudio,

@@ -12,6 +12,7 @@ public partial class App : System.Windows.Application
     private readonly StartupRegistration _startupRegistration;
     private AppSettings _settings = AppSettings.CreateDefault();
     private ProviderSecrets _secrets = ProviderSecrets.Empty;
+    private IAppLogger _logger = NullAppLogger.Instance;
     private TrayMenu? _trayMenu;
     private PillWindow? _pillWindow;
     private DictationController? _controller;
@@ -28,6 +29,23 @@ public partial class App : System.Windows.Application
     {
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        _logger = CreateLogger();
+
+        if (StartupConfiguration.IsEnableCommand(e.Args))
+        {
+            try
+            {
+                StartupConfiguration.Enable(_settingsLoader, _startupRegistration);
+                Shutdown(0);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogException("startup-install", exception);
+                Shutdown(1);
+            }
+
+            return;
+        }
 
         try
         {
@@ -41,7 +59,8 @@ public partial class App : System.Windows.Application
                 _pillWindow,
                 NativeWindow.GetForegroundWindow,
                 _settings.Audio,
-                CreatePipeline(_settings, _secrets));
+                CreatePipeline(_settings, _secrets),
+                _logger);
             _controller.StateChanged += ControllerOnStateChanged;
             _controller.ErrorOccurred += ControllerOnError;
 
@@ -63,6 +82,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("startup", exception);
             System.Windows.MessageBox.Show(
                 BuildStartupErrorMessage(exception),
                 "Dictate could not start",
@@ -84,6 +104,7 @@ public partial class App : System.Windows.Application
 
         _trayMenu?.Dispose();
         _pillWindow?.Close();
+        _logger.Dispose();
         base.OnExit(e);
     }
 
@@ -96,6 +117,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("startup-enable", exception);
             _settings.Enabled = false;
             try
             {
@@ -128,6 +150,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("enabled-toggle", exception);
             _settings.Enabled = previous;
             try
             {
@@ -157,6 +180,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("startup-toggle", exception);
             _settings.LaunchAtLogin = previousSetting;
             try
             {
@@ -210,6 +234,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("settings-reload", exception);
             candidatePipeline?.Dispose();
             Exception? rollbackException = null;
             DictationPipeline? rollbackPipeline = null;
@@ -229,6 +254,7 @@ public partial class App : System.Windows.Application
             }
             catch (Exception rollbackFailure)
             {
+                _logger.LogException("settings-rollback", rollbackFailure);
                 rollbackPipeline?.Dispose();
                 rollbackException = rollbackFailure;
                 try
@@ -318,6 +344,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("hotkey-event", exception);
             _trayMenu?.ShowError($"Dictation failed: {exception.Message}");
         }
     }
@@ -446,6 +473,18 @@ public partial class App : System.Windows.Application
                 configuredPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
+    private IAppLogger CreateLogger()
+    {
+        try
+        {
+            return new SafeAppLogger(new RollingFileLogger(_paths.LogDirectory));
+        }
+        catch
+        {
+            return NullAppLogger.Instance;
+        }
+    }
+
     private void OpenSettingsFolder()
     {
         try
@@ -455,6 +494,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("open-settings", exception);
             _trayMenu?.ShowError($"Could not open settings folder: {exception.Message}");
         }
     }
@@ -473,6 +513,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception exception)
         {
+            _logger.LogException("open-readme", exception);
             _trayMenu?.ShowError($"Could not open README: {exception.Message}");
         }
     }

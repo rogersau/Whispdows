@@ -82,6 +82,7 @@ public sealed class SettingsTests
 
         Assert.NotEqual(sandbox.Paths.SettingsDirectory, sandbox.Paths.ApplicationDirectory);
         Assert.EndsWith(Path.Combine("user", "Dictate", "settings.json"), sandbox.Paths.SettingsFile);
+        Assert.EndsWith(Path.Combine("user", "Dictate", "logs"), sandbox.Paths.LogDirectory);
         Assert.EndsWith(Path.Combine("application", "README.md"), sandbox.Paths.ReadmePath);
     }
 
