@@ -14,7 +14,7 @@
 
 Whispdows is a small Windows tray application for hold-to-talk AI dictation. Hold `RightCtrl`, speak, release, and the cleaned result is pasted into the field that was active when you started.
 
-It is deliberately quiet: no editor window, no browser extension, no Whispdows background service, and no transcript history. Windows ML models and execution-provider packages are downloaded only when local AI is first used, then cached per user.
+It is deliberately quiet: no editor window, no browser extension, no persistent Whispdows background service, and no transcript history. The x64 release includes an English INT8 Whisper model and the OpenVINO GenAI runtime for NPU/GPU transcription. Windows ML cleanup models are downloaded when first needed, then cached per user.
 
 ## The loop
 
@@ -33,7 +33,7 @@ flowchart LR
 | Capability | What happens |
 | --- | --- |
 | Hold-to-talk | A global shortcut starts recording and release ends it. `Escape` cancels. |
-| Local first | Windows ML runs transcription and cleanup on-device, choosing the best available NPU, GPU, or CPU execution path. |
+| Local first | Every local workload follows the configured priority: NPU, then GPU, then CPU. Online providers are last-resort fallbacks. |
 | Online fallback | Local transcription and cleanup can fall through to explicitly configured online providers when enabled. |
 | Cloud when useful | Azure Speech, OpenAI, Groq, and Azure OpenAI are supported through explicit settings. |
 | Natural cleanup | Filler words, false starts, punctuation, and obvious transcription mistakes are cleaned without summarising your words. |
@@ -41,7 +41,7 @@ flowchart LR
 | Focus-safe paste | Whispdows remembers the original target. If focus changes, it leaves the result on the clipboard instead of pasting into the wrong app. |
 | Clipboard respect | Existing clipboard contents are restored unless another application changed them after Whispdows wrote the result. |
 | Tray-native | State is visible through the notification-area icon and a small processing pill. |
-| Release-ready | The packaged build includes the .NET runtime and Windows ML/ONNX Runtime components; catalog models are cached per user. |
+| Release-ready | The x64 package includes .NET, OpenVINO GenAI 2026.2, the pinned Whisper INT8 model, and Windows ML/ONNX Runtime components. |
 
 ## Quick start
 
@@ -69,7 +69,7 @@ Copy-Item "$env:LOCALAPPDATA\Dictate\settings.json" "$env:LOCALAPPDATA\Whispdows
 
 If a legacy `.env` file exists under `%LOCALAPPDATA%\Whispdows`, Whispdows imports it once, encrypts the values for the current Windows user, and clears the plaintext file.
 
-Run the app. The first local dictation or cleanup downloads the selected Windows ML catalog model and required execution-provider packages; later runs use the per-user cache under `%LOCALAPPDATA%\Whispdows\windowsml`.
+The normal x64 release build downloads and verifies the pinned speech assets before packaging. On the first launch, OpenVINO compiles and caches the Whisper model for this machine in the background. Whispdows immediately falls through to the bundled CPU model while NPU/GPU warm-up is in progress, so the first dictation does not wait on accelerator compilation. Windows ML cleanup models use the per-user cache under `%LOCALAPPDATA%\Whispdows\windowsml`.
 
 ```powershell
 dotnet test .\Whispdows.sln --configuration Release
@@ -97,6 +97,8 @@ For an ARM64 package, publish the app with `-RuntimeIdentifier win-arm64 -SkipIn
 
 The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Whispdows`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Whispdows` so upgrades do not overwrite them.
 
+Packaged dependency and model attribution is recorded in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md); the OpenVINO license bundle is included in the x64 release.
+
 If Ollama is not already installed, the installer offers an unchecked **Install Ollama for local AI cleanup** task. Selecting it installs the official `Ollama.Ollama` package through Windows Package Manager. The task is hidden when `ollama.exe` is already available, does not download a model, and never removes Ollama when Whispdows is uninstalled. If Windows Package Manager is unavailable, the installer offers to open Ollama's official Windows instructions instead.
 
 Every push to `master` also runs the [Package Windows app](https://github.com/rogersau/Whispdows/actions/workflows/package-windows.yml) workflow. Download `Whispdows-Setup.exe` from the workflow run's artifact to install the latest build.
@@ -116,13 +118,13 @@ The complete checked-in settings shape is in [`settings.example.json`](settings.
 
 | Provider | Setting | Notes |
 | --- | --- | --- |
-| `windowsml` | `transcription.provider` | Default. Windows ML Whisper model with automatic NPU/GPU/CPU selection. |
+| `windowsml` | `transcription.provider` | Default. OpenVINO GenAI Whisper on exact NPU/GPU devices, then bundled local CPU and Windows ML/online fallbacks. |
 | `local` | `transcription.provider` | Deprecated GGML/Whisper.net compatibility path. |
 | `azure` | `transcription.provider` | Azure Speech Fast Transcription; configure `azureRegion` and `azureLocale`. |
 | `openai` | `transcription.provider` | OpenAI-compatible transcription; configure `openaiModel`. |
 | `groq` | `transcription.provider` | Groq-hosted transcription; configure `groqModel`. |
 
-Windows ML transcription can fall back to the configured online provider when `fallbackToOnline` is enabled. The older cloud-first configuration can still use `fallbackToLocal` for compatibility. Failed provider calls are not retried.
+`inference.devicePriority` is an ordered list, not a hint. The default is `npu`, `gpu`, `cpu`; online transcription is attempted only after those tiers are unavailable and `fallbackToOnline` is enabled. Accelerator initialization is crash-isolated in a worker process, and a tier that is still warming up is skipped for the current dictation. The bundled accelerated model is English-only; other languages fall through to a compatible CPU or online provider. Failed provider calls are not retried.
 
 ### Cleanup providers
 
@@ -130,7 +132,7 @@ Cleanup is independent of transcription:
 
 | Provider | Behavior |
 | --- | --- |
-| `windowsml` | Default. Local Windows ML language model cleanup with automatic NPU/GPU/CPU selection. |
+| `windowsml` | Default. Local Windows ML language-model cleanup using the same exact NPU → GPU → CPU order. |
 | `basic` | Local, deterministic cleanup for whitespace, fillers, and sentence casing. |
 | `ollama` | Send only the transcript and cleanup instructions to an Ollama model on this PC. |
 | `none` | Paste the transcript without cleanup. |
@@ -230,7 +232,7 @@ Whispdows uses a global low-level keyboard hook and `SendInput` for paste. It do
 ## Privacy model
 
 - Audio and transcripts are held in memory and released after processing or cancellation.
-- With Windows ML transcription and cleanup, no audio or transcript is sent over the network after the first-use model/runtime download completes.
+- With OpenVINO/Windows ML transcription and cleanup, no audio or transcript is sent over the network after required model/runtime downloads complete.
 - When an online fallback is enabled, audio or transcript is sent only after the local provider fails and only to the configured provider.
 - Ollama cleanup sends the transcript and fixed instructions only to the configured loopback endpoint, so they do not leave the PC.
 - Cloud transcription sends the completed WAV recording to the selected provider.
@@ -246,6 +248,8 @@ The unsigned personal installer may trigger Microsoft Defender SmartScreen. Buil
 ```text
 src/Whispdows/
 ├── AudioRecorder.cs          WASAPI capture and WAV output
+├── InferenceRouting.cs       NPU → GPU → CPU → online routing and warm-up state
+├── OpenVinoWhisperTranscriber.cs  crash-isolated OpenVINO GenAI speech adapter
 ├── WindowsMlRuntime.cs        Foundry Local lifecycle and per-user model cache
 ├── WindowsMlProviders.cs      Windows ML transcription and cleanup adapters
 ├── Transcribers.cs            deprecated GGML compatibility path and orchestration
@@ -256,6 +260,9 @@ src/Whispdows/
 ├── TextInserter.cs            clipboard-safe focus-aware paste
 ├── TrayMenu.cs                notification-area controls
 └── DictationState.cs          recording → transcription → cleanup → paste state machine
+
+src/Whispdows.InferenceWorker/
+└── Program.cs                 OpenVINO GenAI C API worker and PCM WAV reader
 ```
 
 ## Development checks

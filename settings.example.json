@@ -8,6 +8,13 @@
     "deviceId": "default",
     "maxSeconds": 90
   },
+  "inference": {
+    "devicePriority": [
+      "npu",
+      "gpu",
+      "cpu"
+    ]
+  },
   "transcription": {
     "provider": "windowsml",
     "language": "en",
@@ -15,6 +22,7 @@
     "fallbackToOnline": true,
     "onlineProvider": "openai",
     "windowsMlModel": "whisper-tiny",
+    "acceleratedModelPath": "models/whisper-base.en-int8-ov",
     "localModelPath": "models/ggml-small.en.bin",
     "localThreads": 0,
     "openaiModel": "gpt-4o-transcribe",

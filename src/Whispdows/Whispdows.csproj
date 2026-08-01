@@ -36,10 +36,16 @@
 
   <ItemGroup>
     <None Include="..\..\README.md" Link="README.md" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\..\settings.example.json" Link="settings.example.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\models\ggml-small.en.bin"
              Link="models\ggml-small.en.bin"
-             Condition="Exists('..\..\models\ggml-small.en.bin')"
+             Condition="Exists('..\..\models\ggml-small.en.bin') And '$(BundleModels)' != 'false'"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\models\whisper-base.en-int8-ov\**\*"
+             Link="models\whisper-base.en-int8-ov\%(RecursiveDir)%(Filename)%(Extension)"
+             Condition="Exists('..\..\models\whisper-base.en-int8-ov') And '$(Platform)' != 'ARM64' And '$(BundleModels)' != 'false'"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

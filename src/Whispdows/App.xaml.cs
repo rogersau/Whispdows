@@ -58,13 +58,15 @@ public partial class App : System.Windows.Application
             ReconcileLaunchAtLogin();
 
             _pillWindow = new PillWindow();
+            var pipeline = CreatePipeline(_settings, _secrets);
             _controller = new DictationController(
                 new AudioRecorder(),
                 _pillWindow,
                 NativeWindow.GetForegroundWindow,
                 _settings.Audio,
-                CreatePipeline(_settings, _secrets),
+                pipeline,
                 _logger);
+            StartInferenceWarmup(pipeline);
             _controller.StateChanged += ControllerOnStateChanged;
             _controller.ErrorOccurred += ControllerOnError;
 
@@ -266,6 +268,7 @@ public partial class App : System.Windows.Application
             _startupRegistration.SetEnabled(loaded.LaunchAtLogin);
             _controller.UpdateAudioSettings(loaded.Audio);
             _controller.UpdatePipeline(candidatePipeline);
+            StartInferenceWarmup(candidatePipeline);
             candidatePipeline = null;
             pipelineReplaced = true;
 
@@ -464,85 +467,55 @@ public partial class App : System.Windows.Application
         ProviderSecrets secrets)
     {
         var providerName = settings.Transcription.Provider.ToLowerInvariant();
-        if (providerName == "windowsml")
-        {
-            var local = CreateWindowsMlTranscriber(settings.Transcription);
-            if (!settings.Transcription.FallbackToOnline
-                || string.Equals(
-                    settings.Transcription.OnlineProvider,
-                    "none",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return local;
-            }
-
-            try
-            {
-                return new FallbackTranscriber(
-                    local,
-                    CreateOnlineTranscriber(
-                        settings.Transcription,
-                        secrets,
-                        settings.Transcription.OnlineProvider),
-                    allowMissingPrimaryConfiguration: false,
-                    allowMissingFallbackConfiguration: true);
-            }
-            catch
-            {
-                local.Dispose();
-                throw;
-            }
-        }
-
-        if (providerName == "local")
-        {
-            var local = CreateLocalTranscriber(settings.Transcription);
-            if (!settings.Transcription.FallbackToOnline
-                || string.Equals(
-                    settings.Transcription.OnlineProvider,
-                    "none",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                return local;
-            }
-
-            try
-            {
-                return new FallbackTranscriber(
-                    local,
-                    CreateOnlineTranscriber(
-                        settings.Transcription,
-                        secrets,
-                        settings.Transcription.OnlineProvider),
-                    allowMissingPrimaryConfiguration: false,
-                    allowMissingFallbackConfiguration: true);
-            }
-            catch
-            {
-                local.Dispose();
-                throw;
-            }
-        }
-
-        var cloud = CreateOnlineTranscriber(
-            settings.Transcription,
-            secrets,
-            providerName);
-
-        if (!settings.Transcription.FallbackToLocal)
-        {
-            return cloud;
-        }
-
+        var candidates = new List<ITranscriber>();
         try
         {
-            return new FallbackTranscriber(
-                cloud,
-                CreateLocalFallbackTranscriber(settings.Transcription));
+            if (providerName is "windowsml" or "local")
+            {
+                candidates.AddRange(CreateOnDeviceTranscribers(
+                    settings,
+                    includeWindowsMlCpu: providerName == "windowsml",
+                    includeWhisperCpu: providerName == "local"
+                        || settings.Transcription.FallbackToLocal));
+
+                if (settings.Transcription.FallbackToOnline
+                    && !string.Equals(
+                        settings.Transcription.OnlineProvider,
+                        "none",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    candidates.Add(CreateOnlineTranscriber(
+                        settings.Transcription,
+                        secrets,
+                        settings.Transcription.OnlineProvider));
+                }
+            }
+            else
+            {
+                candidates.Add(CreateOnlineTranscriber(
+                    settings.Transcription,
+                    secrets,
+                    providerName));
+                if (settings.Transcription.FallbackToLocal)
+                {
+                    candidates.AddRange(CreateOnDeviceTranscribers(
+                        settings,
+                        includeWindowsMlCpu: true,
+                        includeWhisperCpu: true));
+                }
+            }
+
+            return candidates.Count == 1
+                ? candidates[0]
+                : new PriorityTranscriber(candidates);
         }
         catch
         {
-            cloud.Dispose();
+            foreach (var candidate in candidates)
+            {
+                candidate.Dispose();
+            }
+
             throw;
         }
     }
@@ -564,53 +537,44 @@ public partial class App : System.Windows.Application
 
         if (providerName == "windowsml")
         {
-            var local = new WindowsMlTextCleaner(
-                GetWindowsMlRuntime(),
-                settings.Cleanup.WindowsMlModel);
-            ITextCleaner? fallback = null;
-
-            if (settings.Cleanup.FallbackToOnline
-                && !string.Equals(
-                    settings.Cleanup.OnlineProvider,
-                    "none",
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                fallback = CreateOnlineTextCleaner(
-                    settings.Cleanup,
-                    secrets,
-                    settings.Cleanup.OnlineProvider,
-                    settings.Cleanup.OnlineModel);
-            }
-
-            if (settings.Cleanup.FallbackToBasic)
-            {
-                var basic = new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant());
-                fallback = fallback is null
-                    ? basic
-                    : new FallbackTextCleaner(
-                        fallback,
-                        basic,
-                        allowMissingPrimaryConfiguration: true,
-                        allowMissingFallbackConfiguration: false);
-            }
-
-            if (fallback is null)
-            {
-                return local;
-            }
-
+            var candidates = new List<ITextCleaner>();
             try
             {
-                return new FallbackTextCleaner(
-                    local,
-                    fallback,
-                    allowMissingPrimaryConfiguration: false,
-                    allowMissingFallbackConfiguration: false);
+                foreach (var device in InferenceDevicePriority.Parse(
+                    settings.Inference.DevicePriority))
+                {
+                    candidates.Add(new WindowsMlTextCleaner(
+                        GetWindowsMlRuntime(),
+                        settings.Cleanup.WindowsMlModel,
+                        device));
+                }
+
+                if (settings.Cleanup.FallbackToOnline
+                    && !string.Equals(
+                        settings.Cleanup.OnlineProvider,
+                        "none",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    candidates.Add(CreateOnlineTextCleaner(
+                        settings.Cleanup,
+                        secrets,
+                        settings.Cleanup.OnlineProvider,
+                        settings.Cleanup.OnlineModel));
+                }
+
+                if (settings.Cleanup.FallbackToBasic)
+                {
+                    candidates.Add(new BasicTextCleaner(
+                        settings.Cleanup.Style.ToLowerInvariant()));
+                }
+
+                return candidates.Count == 1
+                    ? candidates[0]
+                    : new PriorityTextCleaner(candidates);
             }
             catch
             {
-                local.Dispose();
-                if (fallback is IDisposable disposable)
+                foreach (var disposable in candidates.OfType<IDisposable>())
                 {
                     disposable.Dispose();
                 }
@@ -630,9 +594,11 @@ public partial class App : System.Windows.Application
 
         try
         {
-            return new FallbackTextCleaner(
+            return new PriorityTextCleaner(
+            [
                 aiCleaner,
-                new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant()));
+                new BasicTextCleaner(settings.Cleanup.Style.ToLowerInvariant())
+            ]);
         }
         catch
         {
@@ -699,21 +665,41 @@ public partial class App : System.Windows.Application
             settings.LocalThreads);
     }
 
-    private ITranscriber CreateWindowsMlTranscriber(TranscriptionSettings settings)
+    private IReadOnlyList<ITranscriber> CreateOnDeviceTranscribers(
+        AppSettings settings,
+        bool includeWindowsMlCpu,
+        bool includeWhisperCpu)
     {
-        return new WindowsMlTranscriber(
-            GetWindowsMlRuntime(),
-            settings.WindowsMlModel,
-            settings.Language);
-    }
+        var candidates = new List<ITranscriber>();
+        foreach (var device in InferenceDevicePriority.Parse(
+            settings.Inference.DevicePriority))
+        {
+            if (device is InferenceDevice.Npu or InferenceDevice.Gpu)
+            {
+                candidates.Add(new OpenVinoWhisperTranscriber(
+                    ResolveApplicationPath(settings.Transcription.AcceleratedModelPath),
+                    settings.Transcription.Language,
+                    device,
+                    Path.Combine(_paths.SettingsDirectory, "openvino-cache")));
+                continue;
+            }
 
-    private ITranscriber CreateLocalFallbackTranscriber(TranscriptionSettings settings)
-    {
-        return new FallbackTranscriber(
-            CreateWindowsMlTranscriber(settings),
-            CreateLocalTranscriber(settings),
-            allowMissingPrimaryConfiguration: false,
-            allowMissingFallbackConfiguration: false);
+            if (includeWindowsMlCpu)
+            {
+                candidates.Add(new WindowsMlTranscriber(
+                    GetWindowsMlRuntime(),
+                    settings.Transcription.WindowsMlModel,
+                    settings.Transcription.Language,
+                    InferenceDevice.Cpu));
+            }
+
+            if (includeWhisperCpu)
+            {
+                candidates.Add(CreateLocalTranscriber(settings.Transcription));
+            }
+        }
+
+        return candidates;
     }
 
     private WindowsMlRuntime GetWindowsMlRuntime()
@@ -721,6 +707,31 @@ public partial class App : System.Windows.Application
         return _windowsMlRuntime
             ?? throw new InvalidOperationException(
                 "The Windows ML runtime has not been initialized.");
+    }
+
+    private void StartInferenceWarmup(DictationPipeline pipeline)
+    {
+        _ = WarmUpInferenceSafelyAsync(pipeline);
+    }
+
+    private async Task WarmUpInferenceSafelyAsync(DictationPipeline pipeline)
+    {
+        try
+        {
+            await pipeline.WarmUpAsync(CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            // A replaced or closing pipeline can cancel its own initialization.
+        }
+        catch (ObjectDisposedException)
+        {
+            // Settings changes may replace a pipeline while it is warming up.
+        }
+        catch (Exception exception)
+        {
+            _logger.LogException("inference-warmup", exception);
+        }
     }
 
     private string ResolveApplicationPath(string configuredPath)

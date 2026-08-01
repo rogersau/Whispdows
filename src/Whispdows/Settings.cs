@@ -49,6 +49,8 @@ public sealed class AppSettings
 
     public AudioSettings Audio { get; set; } = new();
 
+    public InferenceSettings Inference { get; set; } = new();
+
     public TranscriptionSettings Transcription { get; set; } = new();
 
     public CleanupSettings Cleanup { get; set; } = new();
@@ -79,6 +81,10 @@ internal static class SettingsSnapshot
                 DeviceId = source.Audio.DeviceId,
                 MaxSeconds = source.Audio.MaxSeconds
             },
+            Inference = new InferenceSettings
+            {
+                DevicePriority = [.. source.Inference.DevicePriority]
+            },
             Transcription = new TranscriptionSettings
             {
                 Provider = source.Transcription.Provider,
@@ -87,6 +93,7 @@ internal static class SettingsSnapshot
                 FallbackToOnline = source.Transcription.FallbackToOnline,
                 OnlineProvider = source.Transcription.OnlineProvider,
                 WindowsMlModel = source.Transcription.WindowsMlModel,
+                AcceleratedModelPath = source.Transcription.AcceleratedModelPath,
                 LocalModelPath = source.Transcription.LocalModelPath,
                 LocalThreads = source.Transcription.LocalThreads,
                 OpenaiModel = source.Transcription.OpenaiModel,
@@ -132,6 +139,11 @@ public sealed class AudioSettings
     public int MaxSeconds { get; set; } = 90;
 }
 
+public sealed class InferenceSettings
+{
+    public List<string> DevicePriority { get; set; } = ["npu", "gpu", "cpu"];
+}
+
 public sealed class TranscriptionSettings
 {
     public string Provider { get; set; } = "windowsml";
@@ -145,6 +157,9 @@ public sealed class TranscriptionSettings
     public string OnlineProvider { get; set; } = "openai";
 
     public string WindowsMlModel { get; set; } = "whisper-tiny";
+
+    public string AcceleratedModelPath { get; set; } =
+        "models/whisper-base.en-int8-ov";
 
     public string LocalModelPath { get; set; } = "models/ggml-small.en.bin";
 
@@ -293,6 +308,11 @@ public static class SettingsValidator
         "auto", "sentence", "fragment"
     };
 
+    private static readonly HashSet<string> InferenceDevices = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "npu", "gpu", "cpu"
+    };
+
     public static IReadOnlyList<string> Validate(AppSettings? settings)
     {
         var errors = new List<string>();
@@ -329,6 +349,34 @@ public static class SettingsValidator
             }
         }
 
+        if (settings.Inference is null)
+        {
+            errors.Add("inference must be an object.");
+        }
+        else if (settings.Inference.DevicePriority is null
+            || settings.Inference.DevicePriority.Count == 0)
+        {
+            errors.Add("inference.devicePriority must contain at least one device.");
+        }
+        else
+        {
+            var seenDevices = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var device in settings.Inference.DevicePriority)
+            {
+                if (string.IsNullOrWhiteSpace(device) || !InferenceDevices.Contains(device))
+                {
+                    errors.Add(
+                        "inference.devicePriority entries must be one of: cpu, gpu, npu.");
+                    continue;
+                }
+
+                if (!seenDevices.Add(device))
+                {
+                    errors.Add("inference.devicePriority cannot contain duplicate devices.");
+                }
+            }
+        }
+
         if (settings.Transcription is null)
         {
             errors.Add("transcription must be an object.");
@@ -349,6 +397,11 @@ public static class SettingsValidator
             if (string.IsNullOrWhiteSpace(settings.Transcription.WindowsMlModel))
             {
                 errors.Add("transcription.windowsMlModel must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.Transcription.AcceleratedModelPath))
+            {
+                errors.Add("transcription.acceleratedModelPath must not be empty.");
             }
 
             if (settings.Transcription.LocalThreads < 0)

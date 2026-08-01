@@ -46,6 +46,20 @@ public sealed class DictationPipeline : IDisposable
         }
     }
 
+    public async Task WarmUpAsync(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (Transcriber is IInferenceWarmup transcriberWarmup)
+        {
+            await transcriberWarmup.WarmUpAsync(cancellationToken);
+        }
+
+        if (TextCleaner is IInferenceWarmup cleanerWarmup)
+        {
+            await cleanerWarmup.WarmUpAsync(cancellationToken);
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -67,7 +81,10 @@ public sealed class DictationPipeline : IDisposable
     }
 }
 
-public sealed class WhisperCppTranscriber : ITranscriber, IProviderComponent
+public sealed class WhisperCppTranscriber :
+    ITranscriber,
+    IProviderComponent,
+    IInferenceWarmup
 {
     private readonly string _modelPath;
     private readonly string _language;
@@ -91,7 +108,16 @@ public sealed class WhisperCppTranscriber : ITranscriber, IProviderComponent
             : configuredThreads;
     }
 
-    public string ProviderName => "local";
+    public string ProviderName => "local-cpu";
+
+    public async Task WarmUpAsync(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.Token);
+        _ = await GetProcessorAsync(linkedCancellation.Token);
+    }
 
     public async Task<string> TranscribeAsync(
         Stream wavAudio,

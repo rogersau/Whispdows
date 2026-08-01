@@ -2,29 +2,40 @@ using Betalgo.Ranul.OpenAI.ObjectModels.RequestModels;
 using Microsoft.AI.Foundry.Local;
 using NAudio.Wave;
 using System.IO;
-using System.Text;
 
 namespace Whispdows;
 
-public sealed class WindowsMlTranscriber : ITranscriber, IProviderComponent
+public sealed class WindowsMlTranscriber :
+    ITranscriber,
+    IProviderComponent,
+    IInferenceWarmup
 {
     private readonly WindowsMlRuntime _runtime;
     private readonly string _modelAlias;
     private readonly string _language;
+    private readonly InferenceDevice _device;
+    private readonly BackgroundInferenceInitialization<IModel> _initialization;
     private readonly SemaphoreSlim _processingGate = new(1, 1);
     private bool _disposed;
 
     public WindowsMlTranscriber(
         WindowsMlRuntime runtime,
         string modelAlias,
-        string language)
+        string language,
+        InferenceDevice device)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _modelAlias = modelAlias;
         _language = language;
+        _device = device;
+        _initialization = new BackgroundInferenceInitialization<IModel>(
+            cancellationToken => _runtime.GetModelAsync(
+                _modelAlias,
+                _device,
+                cancellationToken));
     }
 
-    public string ProviderName => "windowsml";
+    public string ProviderName => $"windowsml-{_device.ToProviderSuffix()}";
 
     public void ValidateConfiguration()
     {
@@ -51,51 +62,28 @@ public sealed class WindowsMlTranscriber : ITranscriber, IProviderComponent
         ValidateConfiguration();
 
         await _processingGate.WaitAsync(cancellationToken);
-        byte[]? pcmAudio = null;
+        byte[]? wavBytes = null;
+        var wavPath = Path.Combine(
+            Path.GetTempPath(),
+            $"whispdows-transcription-{Guid.NewGuid():N}.wav");
         try
         {
-            var model = await _runtime.GetModelAsync(_modelAlias, cancellationToken);
+            var model = await _initialization.GetIfReadyAsync(
+                ProviderName,
+                cancellationToken);
             var audioClient = await model.GetAudioClientAsync(cancellationToken);
-            pcmAudio = await ReadPcmAudioAsync(wavAudio, cancellationToken);
-
-            await using var session = audioClient.CreateLiveTranscriptionSession();
-            session.Settings.SampleRate = 16000;
-            session.Settings.Channels = 1;
-            session.Settings.BitsPerSample = 16;
-            session.Settings.Language =
+            audioClient.Settings.Language =
                 string.Equals(_language, "auto", StringComparison.OrdinalIgnoreCase)
                     ? null
                     : _language;
+            audioClient.Settings.Temperature = 0.0f;
 
-            await session.StartAsync(cancellationToken);
-            var resultsTask = ReadResultsAsync(session, cancellationToken);
-            try
-            {
-                const int chunkSize = 64 * 1024;
-                for (var offset = 0; offset < pcmAudio.Length; offset += chunkSize)
-                {
-                    var length = Math.Min(chunkSize, pcmAudio.Length - offset);
-                    await session.AppendAsync(
-                        pcmAudio.AsMemory(offset, length),
-                        cancellationToken);
-                }
-
-                await session.StopAsync(cancellationToken);
-                return await resultsTask;
-            }
-            catch
-            {
-                try
-                {
-                    await session.StopAsync(CancellationToken.None);
-                }
-                catch
-                {
-                    // Preserve the original inference failure.
-                }
-
-                throw;
-            }
+            wavBytes = await ReadWavAudioAsync(wavAudio, cancellationToken);
+            await File.WriteAllBytesAsync(wavPath, wavBytes, cancellationToken);
+            var response = await audioClient.TranscribeAudioAsync(
+                wavPath,
+                cancellationToken);
+            return response.Text?.Trim() ?? string.Empty;
         }
         catch (OperationCanceledException)
         {
@@ -113,9 +101,18 @@ public sealed class WindowsMlTranscriber : ITranscriber, IProviderComponent
         }
         finally
         {
-            if (pcmAudio is not null)
+            if (wavBytes is not null)
             {
-                Array.Clear(pcmAudio);
+                Array.Clear(wavBytes);
+            }
+
+            try
+            {
+                File.Delete(wavPath);
+            }
+            catch
+            {
+                // Best-effort cleanup of the temporary audio file.
             }
 
             _processingGate.Release();
@@ -130,10 +127,11 @@ public sealed class WindowsMlTranscriber : ITranscriber, IProviderComponent
         }
 
         _disposed = true;
+        _initialization.Dispose();
         _processingGate.Dispose();
     }
 
-    private static async Task<byte[]> ReadPcmAudioAsync(
+    private static async Task<byte[]> ReadWavAudioAsync(
         Stream wavAudio,
         CancellationToken cancellationToken)
     {
@@ -156,85 +154,47 @@ public sealed class WindowsMlTranscriber : ITranscriber, IProviderComponent
                 "Windows ML transcription requires mono 16 kHz 16-bit PCM WAV audio.");
         }
 
-        var pcmAudio = new byte[checked((int)reader.Length)];
-        var offset = 0;
-        while (offset < pcmAudio.Length)
-        {
-            var bytesRead = reader.Read(pcmAudio, offset, pcmAudio.Length - offset);
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            offset += bytesRead;
-        }
-
-        if (offset != pcmAudio.Length)
-        {
-            Array.Resize(ref pcmAudio, offset);
-        }
-
-        return pcmAudio;
+        return wavBuffer.ToArray();
     }
 
-    private static async Task<string> ReadResultsAsync(
-        Microsoft.AI.Foundry.Local.OpenAI.LiveAudioTranscriptionSession session,
-        CancellationToken cancellationToken)
+    public Task WarmUpAsync(CancellationToken cancellationToken)
     {
-        var finalText = new StringBuilder();
-        var lastPartial = string.Empty;
-        await foreach (var response in session.GetStream(cancellationToken))
-        {
-            var text = response.Content?.FirstOrDefault()?.Text?.Trim();
-            if (string.IsNullOrWhiteSpace(text))
-            {
-                continue;
-            }
-
-            if (response.IsFinal)
-            {
-                AppendSegment(finalText, text);
-            }
-            else
-            {
-                lastPartial = text;
-            }
-        }
-
-        return finalText.Length > 0
-            ? finalText.ToString().Trim()
-            : lastPartial;
-    }
-
-    private static void AppendSegment(StringBuilder builder, string text)
-    {
-        if (builder.Length > 0
-            && !char.IsWhiteSpace(builder[^1])
-            && !char.IsWhiteSpace(text[0]))
-        {
-            builder.Append(' ');
-        }
-
-        builder.Append(text);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ValidateConfiguration();
+        return _initialization.WarmUpAsync(cancellationToken);
     }
 }
 
-public sealed class WindowsMlTextCleaner : ITextCleaner, IConfigurationValidator, IProviderComponent, IDisposable
+public sealed class WindowsMlTextCleaner :
+    ITextCleaner,
+    IConfigurationValidator,
+    IProviderComponent,
+    IInferenceWarmup,
+    IDisposable
 {
     private readonly WindowsMlRuntime _runtime;
     private readonly string _modelAlias;
+    private readonly InferenceDevice _device;
+    private readonly BackgroundInferenceInitialization<IModel> _initialization;
     private readonly SemaphoreSlim _processingGate = new(1, 1);
     private bool _disposed;
 
     public WindowsMlTextCleaner(
         WindowsMlRuntime runtime,
-        string modelAlias)
+        string modelAlias,
+        InferenceDevice device)
     {
         _runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
         _modelAlias = modelAlias;
+        _device = device;
+        _initialization = new BackgroundInferenceInitialization<IModel>(
+            cancellationToken => _runtime.GetModelAsync(
+                _modelAlias,
+                _device,
+                cancellationToken));
     }
 
-    public string ProviderName => "windowsml";
+    public string ProviderName => $"windowsml-{_device.ToProviderSuffix()}";
 
     public void ValidateConfiguration()
     {
@@ -257,7 +217,9 @@ public sealed class WindowsMlTextCleaner : ITextCleaner, IConfigurationValidator
         await _processingGate.WaitAsync(cancellationToken);
         try
         {
-            var model = await _runtime.GetModelAsync(_modelAlias, cancellationToken);
+            var model = await _initialization.GetIfReadyAsync(
+                ProviderName,
+                cancellationToken);
             var chatClient = await model.GetChatClientAsync(cancellationToken);
             var messages = new[]
             {
@@ -305,6 +267,13 @@ public sealed class WindowsMlTextCleaner : ITextCleaner, IConfigurationValidator
         }
     }
 
+    public Task WarmUpAsync(CancellationToken cancellationToken)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ValidateConfiguration();
+        return _initialization.WarmUpAsync(cancellationToken);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -313,6 +282,7 @@ public sealed class WindowsMlTextCleaner : ITextCleaner, IConfigurationValidator
         }
 
         _disposed = true;
+        _initialization.Dispose();
         _processingGate.Dispose();
     }
 }

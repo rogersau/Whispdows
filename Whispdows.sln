@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whispdows", "src\Whispdows\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whispdows.Tests", "tests\Whispdows.Tests\Whispdows.Tests.csproj", "{C3F6A8E4-49A2-4B8C-8D4A-7E1F36E8F9A2}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whispdows.InferenceWorker", "src\Whispdows.InferenceWorker\Whispdows.InferenceWorker.csproj", "{9A5EBC0C-9D3B-48FC-B7AD-75D19A936A4B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -21,6 +23,10 @@ Global
 		{C3F6A8E4-49A2-4B8C-8D4A-7E1F36E8F9A2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C3F6A8E4-49A2-4B8C-8D4A-7E1F36E8F9A2}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C3F6A8E4-49A2-4B8C-8D4A-7E1F36E8F9A2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9A5EBC0C-9D3B-48FC-B7AD-75D19A936A4B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9A5EBC0C-9D3B-48FC-B7AD-75D19A936A4B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9A5EBC0C-9D3B-48FC-B7AD-75D19A936A4B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9A5EBC0C-9D3B-48FC-B7AD-75D19A936A4B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

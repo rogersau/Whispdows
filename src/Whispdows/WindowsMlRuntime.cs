@@ -12,8 +12,7 @@ namespace Whispdows;
 public sealed class WindowsMlRuntime : IDisposable
 {
     private readonly object _sync = new();
-    private readonly Dictionary<string, Task<IModel>> _models =
-        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<ModelCacheKey, Task<IModel>> _models = [];
     private readonly string _appDataDirectory;
     private Task<FoundryLocalManager>? _managerTask;
     private bool _disposed;
@@ -26,18 +25,20 @@ public sealed class WindowsMlRuntime : IDisposable
 
     public async Task<IModel> GetModelAsync(
         string alias,
+        InferenceDevice device,
         CancellationToken cancellationToken)
     {
         ValidateAlias(alias);
+        var cacheKey = new ModelCacheKey(alias.ToLowerInvariant(), device);
 
         Task<IModel> modelTask;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            if (!_models.TryGetValue(alias, out modelTask!))
+            if (!_models.TryGetValue(cacheKey, out modelTask!))
             {
-                modelTask = LoadModelAsync(alias);
-                _models[alias] = modelTask;
+                modelTask = LoadModelAsync(alias, device);
+                _models[cacheKey] = modelTask;
             }
         }
 
@@ -49,10 +50,10 @@ public sealed class WindowsMlRuntime : IDisposable
         {
             lock (_sync)
             {
-                if (_models.TryGetValue(alias, out var current)
+                if (_models.TryGetValue(cacheKey, out var current)
                     && ReferenceEquals(current, modelTask))
                 {
-                    _models.Remove(alias);
+                    _models.Remove(cacheKey);
                 }
             }
 
@@ -90,7 +91,9 @@ public sealed class WindowsMlRuntime : IDisposable
         }
     }
 
-    private async Task<IModel> LoadModelAsync(string alias)
+    private async Task<IModel> LoadModelAsync(
+        string alias,
+        InferenceDevice device)
     {
         var manager = await GetManagerAsync(CancellationToken.None);
         try
@@ -103,9 +106,30 @@ public sealed class WindowsMlRuntime : IDisposable
                     $"The Windows ML model '{alias}' is not available in the Foundry Local catalog.");
             }
 
-            await model.DownloadAsync();
-            await model.LoadAsync();
-            return model;
+            var foundryDevice = device switch
+            {
+                InferenceDevice.Npu => DeviceType.NPU,
+                InferenceDevice.Gpu => DeviceType.GPU,
+                InferenceDevice.Cpu => DeviceType.CPU,
+                _ => DeviceType.Invalid
+            };
+            var variant = model.Variants.FirstOrDefault(candidate =>
+                candidate.Info.Runtime?.DeviceType == foundryDevice);
+            if (variant is null)
+            {
+                var availableDevices = model.Variants
+                    .Select(candidate =>
+                        candidate.Info.Runtime?.DeviceType.ToString() ?? "Unknown")
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Order(StringComparer.OrdinalIgnoreCase);
+                throw new WindowsMlUnavailableException(
+                    $"The Windows ML model '{alias}' has no {device.ToProviderSuffix().ToUpperInvariant()} variant. " +
+                    $"Available devices: {string.Join(", ", availableDevices)}.");
+            }
+
+            await variant.DownloadAsync();
+            await variant.LoadAsync();
+            return variant;
         }
         catch (WindowsMlUnavailableException)
         {
@@ -177,6 +201,10 @@ public sealed class WindowsMlRuntime : IDisposable
                 nameof(alias));
         }
     }
+
+    private readonly record struct ModelCacheKey(
+        string Alias,
+        InferenceDevice Device);
 }
 
 public sealed class WindowsMlUnavailableException : Exception

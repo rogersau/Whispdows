@@ -15,3 +15,5 @@ secrets.dat
 # The local Whisper model is supplied separately in a later slice.
 models/*.bin
 models/*.download
+models/*-encoder/
+models/whisper-base.en-int8-ov/

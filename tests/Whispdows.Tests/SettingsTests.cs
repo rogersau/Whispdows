@@ -14,8 +14,12 @@ public sealed class SettingsTests
         Assert.True(settings.Enabled);
         Assert.Equal("RightCtrl", settings.Hotkey.Shortcut);
         Assert.Equal(90, settings.Audio.MaxSeconds);
+        Assert.Equal(["npu", "gpu", "cpu"], settings.Inference.DevicePriority);
         Assert.Equal("windowsml", settings.Transcription.Provider);
         Assert.Equal("whisper-tiny", settings.Transcription.WindowsMlModel);
+        Assert.Equal(
+            "models/whisper-base.en-int8-ov",
+            settings.Transcription.AcceleratedModelPath);
         Assert.Equal("gpt-4o-transcribe", settings.Transcription.OpenaiModel);
         Assert.Equal("en-US", settings.Transcription.AzureLocale);
         Assert.Equal("windowsml", settings.Cleanup.Provider);
@@ -28,6 +32,20 @@ public sealed class SettingsTests
         var json = File.ReadAllText(sandbox.Paths.SettingsFile);
         Assert.Contains("\"launchAtLogin\": false", json);
         Assert.Contains("\"restoreDelayMs\": 175", json);
+    }
+
+    [Fact]
+    public void Save_rejects_invalid_or_duplicate_inference_devices()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Inference.DevicePriority = ["npu", "tpu", "NPU"];
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("inference.devicePriority entries", exception.Message);
+        Assert.Contains("duplicate devices", exception.Message);
     }
 
     [Fact]
@@ -138,17 +156,20 @@ public sealed class SettingsTests
         settings.Cleanup.Model = "gpt-5.4-nano";
         settings.Cleanup.AzureEndpoint =
             "https://resource.services.ai.azure.com/openai/v1";
+        settings.Inference.DevicePriority = ["gpu", "cpu"];
 
         var snapshot = SettingsSnapshot.Clone(settings);
         snapshot.Hotkey.Shortcut = "RightCtrl";
         snapshot.Cleanup.Model = "other-model";
         snapshot.Cleanup.AzureEndpoint = "https://other.example/openai/v1";
+        snapshot.Inference.DevicePriority[0] = "npu";
 
         Assert.Equal("F13", settings.Hotkey.Shortcut);
         Assert.Equal("gpt-5.4-nano", settings.Cleanup.Model);
         Assert.Equal(
             "https://resource.services.ai.azure.com/openai/v1",
             settings.Cleanup.AzureEndpoint);
+        Assert.Equal(["gpu", "cpu"], settings.Inference.DevicePriority);
     }
 
     [Fact]
