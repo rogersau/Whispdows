@@ -93,6 +93,9 @@ internal static class SettingsSnapshot
                 Provider = source.Transcription.Provider,
                 Language = source.Transcription.Language,
                 FallbackToLocal = source.Transcription.FallbackToLocal,
+                FallbackToOnline = source.Transcription.FallbackToOnline,
+                OnlineProvider = source.Transcription.OnlineProvider,
+                WindowsMlModel = source.Transcription.WindowsMlModel,
                 LocalModelPath = source.Transcription.LocalModelPath,
                 LocalThreads = source.Transcription.LocalThreads,
                 OpenaiModel = source.Transcription.OpenaiModel,
@@ -104,10 +107,14 @@ internal static class SettingsSnapshot
             {
                 Provider = source.Cleanup.Provider,
                 Model = source.Cleanup.Model,
+                WindowsMlModel = source.Cleanup.WindowsMlModel,
+                OnlineModel = source.Cleanup.OnlineModel,
                 LocalModel = source.Cleanup.LocalModel,
                 LocalEndpoint = source.Cleanup.LocalEndpoint,
                 AzureEndpoint = source.Cleanup.AzureEndpoint,
                 Style = source.Cleanup.Style,
+                OnlineProvider = source.Cleanup.OnlineProvider,
+                FallbackToOnline = source.Cleanup.FallbackToOnline,
                 FallbackToBasic = source.Cleanup.FallbackToBasic
             },
             Paste = new PasteSettings
@@ -158,11 +165,17 @@ public sealed class AudioSettings
 
 public sealed class TranscriptionSettings
 {
-    public string Provider { get; set; } = "local";
+    public string Provider { get; set; } = "windowsml";
 
     public string Language { get; set; } = "en";
 
     public bool FallbackToLocal { get; set; } = true;
+
+    public bool FallbackToOnline { get; set; } = true;
+
+    public string OnlineProvider { get; set; } = "openai";
+
+    public string WindowsMlModel { get; set; } = "whisper-tiny";
 
     public string LocalModelPath { get; set; } = "models/ggml-small.en.bin";
 
@@ -179,9 +192,13 @@ public sealed class TranscriptionSettings
 
 public sealed class CleanupSettings
 {
-    public string Provider { get; set; } = "basic";
+    public string Provider { get; set; } = "windowsml";
 
     public string Model { get; set; } = string.Empty;
+
+    public string WindowsMlModel { get; set; } = "qwen2.5-0.5b";
+
+    public string OnlineModel { get; set; } = "gpt-4o-mini";
 
     public string LocalModel { get; set; } = "gemma3:1b";
 
@@ -190,6 +207,10 @@ public sealed class CleanupSettings
     public string AzureEndpoint { get; set; } = string.Empty;
 
     public string Style { get; set; } = "auto";
+
+    public string OnlineProvider { get; set; } = "openai";
+
+    public bool FallbackToOnline { get; set; } = true;
 
     public bool FallbackToBasic { get; set; } = true;
 }
@@ -307,12 +328,22 @@ public static class SettingsValidator
 {
     private static readonly HashSet<string> TranscriptionProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "local", "openai", "groq", "azure"
+        "windowsml", "local", "openai", "groq", "azure"
+    };
+
+    private static readonly HashSet<string> TranscriptionOnlineProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "none", "openai", "groq", "azure"
     };
 
     private static readonly HashSet<string> CleanupProviders = new(StringComparer.OrdinalIgnoreCase)
     {
-        "basic", "openai", "groq", "azure-openai", "ollama", "none"
+        "windowsml", "basic", "openai", "groq", "azure-openai", "ollama", "none"
+    };
+
+    private static readonly HashSet<string> CleanupOnlineProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "none", "openai", "groq", "azure-openai"
     };
 
     private static readonly HashSet<string> CleanupStyles = new(StringComparer.OrdinalIgnoreCase)
@@ -382,9 +413,19 @@ public static class SettingsValidator
         else
         {
             AddAllowedValueError(errors, "transcription.provider", settings.Transcription.Provider, TranscriptionProviders);
+            AddAllowedValueError(
+                errors,
+                "transcription.onlineProvider",
+                settings.Transcription.OnlineProvider,
+                TranscriptionOnlineProviders);
             if (string.IsNullOrWhiteSpace(settings.Transcription.Language))
             {
                 errors.Add("transcription.language must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.Transcription.WindowsMlModel))
+            {
+                errors.Add("transcription.windowsMlModel must not be empty.");
             }
 
             if (settings.Transcription.LocalThreads < 0)
@@ -409,7 +450,17 @@ public static class SettingsValidator
                 errors.Add("transcription.groqModel must not be empty when using Groq.");
             }
 
-            if (string.Equals(settings.Transcription.Provider, "azure", StringComparison.OrdinalIgnoreCase))
+            if (settings.Transcription.FallbackToOnline)
+            {
+                AddOnlineTranscriptionModelErrors(errors, settings.Transcription);
+            }
+
+            if (string.Equals(settings.Transcription.Provider, "azure", StringComparison.OrdinalIgnoreCase)
+                || (settings.Transcription.FallbackToOnline
+                    && string.Equals(
+                        settings.Transcription.OnlineProvider,
+                        "azure",
+                        StringComparison.OrdinalIgnoreCase)))
             {
                 if (!AzureSpeechConfiguration.IsValidRegion(
                     settings.Transcription.AzureRegion))
@@ -432,6 +483,11 @@ public static class SettingsValidator
         else
         {
             AddAllowedValueError(errors, "cleanup.provider", settings.Cleanup.Provider, CleanupProviders);
+            AddAllowedValueError(
+                errors,
+                "cleanup.onlineProvider",
+                settings.Cleanup.OnlineProvider,
+                CleanupOnlineProviders);
             AddAllowedValueError(errors, "cleanup.style", settings.Cleanup.Style, CleanupStyles);
             var isAzureOpenAi = string.Equals(
                 settings.Cleanup.Provider,
@@ -446,6 +502,28 @@ public static class SettingsValidator
             }
 
             if (isAzureOpenAi
+                && !AzureOpenAiConfiguration.IsValidEndpoint(settings.Cleanup.AzureEndpoint))
+            {
+                errors.Add(
+                    "cleanup.azureEndpoint must be an HTTPS Azure OpenAI v1 endpoint ending in /openai/v1.");
+            }
+
+            if (string.Equals(settings.Cleanup.Provider, "windowsml", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(settings.Cleanup.WindowsMlModel))
+            {
+                errors.Add("cleanup.windowsMlModel must not be empty when using Windows ML.");
+            }
+
+            if (settings.Cleanup.FallbackToOnline)
+            {
+                AddOnlineCleanupModelErrors(errors, settings.Cleanup);
+            }
+
+            if (settings.Cleanup.FallbackToOnline
+                && string.Equals(
+                    settings.Cleanup.OnlineProvider,
+                    "azure-openai",
+                    StringComparison.OrdinalIgnoreCase)
                 && !AzureOpenAiConfiguration.IsValidEndpoint(settings.Cleanup.AzureEndpoint))
             {
                 errors.Add(
@@ -577,6 +655,42 @@ public static class SettingsValidator
             && string.IsNullOrEmpty(uri.UserInfo)
             && string.IsNullOrEmpty(uri.Query)
             && string.IsNullOrEmpty(uri.Fragment);
+    }
+
+    private static void AddOnlineTranscriptionModelErrors(
+        ICollection<string> errors,
+        TranscriptionSettings settings)
+    {
+        if (string.Equals(settings.OnlineProvider, "openai", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(settings.OpenaiModel))
+        {
+            errors.Add("transcription.openaiModel must not be empty when using OpenAI as the online fallback.");
+        }
+
+        if (string.Equals(settings.OnlineProvider, "groq", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(settings.GroqModel))
+        {
+            errors.Add("transcription.groqModel must not be empty when using Groq as the online fallback.");
+        }
+    }
+
+    private static void AddOnlineCleanupModelErrors(
+        ICollection<string> errors,
+        CleanupSettings settings)
+    {
+        var provider = settings.OnlineProvider?.Trim().ToLowerInvariant();
+        if (provider is "openai" or "groq" or "azure-openai"
+            && string.IsNullOrWhiteSpace(settings.OnlineModel))
+        {
+            errors.Add("cleanup.onlineModel must not be empty when using an online cleanup fallback.");
+        }
+
+        if (string.Equals(provider, "azure-openai", StringComparison.OrdinalIgnoreCase)
+            && !AzureOpenAiConfiguration.IsValidEndpoint(settings.AzureEndpoint))
+        {
+            errors.Add(
+                "cleanup.azureEndpoint must be an HTTPS Azure OpenAI v1 endpoint ending in /openai/v1.");
+        }
     }
 }
 

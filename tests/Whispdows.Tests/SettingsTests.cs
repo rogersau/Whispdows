@@ -16,10 +16,13 @@ public sealed class SettingsTests
         Assert.True(settings.Features.MeetingNotes);
         Assert.Equal("RightCtrl", settings.Hotkey.Shortcut);
         Assert.Equal(90, settings.Audio.MaxSeconds);
-        Assert.Equal("local", settings.Transcription.Provider);
+        Assert.Equal("windowsml", settings.Transcription.Provider);
+        Assert.Equal("whisper-tiny", settings.Transcription.WindowsMlModel);
         Assert.Equal("gpt-4o-transcribe", settings.Transcription.OpenaiModel);
         Assert.Equal("en-US", settings.Transcription.AzureLocale);
-        Assert.Equal("basic", settings.Cleanup.Provider);
+        Assert.Equal("windowsml", settings.Cleanup.Provider);
+        Assert.Equal("qwen2.5-0.5b", settings.Cleanup.WindowsMlModel);
+        Assert.Equal("gpt-4o-mini", settings.Cleanup.OnlineModel);
         Assert.Equal("auto", settings.MeetingNotes.TranscriptionProvider);
         Assert.Equal("models/ggml-medium.en.bin", settings.MeetingNotes.LocalModelPath);
         Assert.Equal("auto", settings.MeetingNotes.NotesProvider);

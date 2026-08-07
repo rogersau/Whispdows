@@ -56,15 +56,20 @@ public sealed class ReleaseContractTests
             RepositoryFile("scripts", "Build-Release.ps1"));
 
         Assert.Contains("--self-contained true", buildScript);
-        Assert.Contains("-r win-x64", buildScript);
+        Assert.Contains("-r $RuntimeIdentifier", buildScript);
+        Assert.Contains("RuntimeIdentifier", buildScript);
+        Assert.Contains("win-arm64", buildScript);
         Assert.Contains("PublishSingleFile=false", buildScript);
         Assert.Contains("PublishTrimmed=false", buildScript);
         Assert.Contains("db8a495a91d927739e50b3fc1cc4c6b8f6c2d022", buildScript);
         Assert.Contains("8c30f0e44ce9560643ebd10bbe50cd20eafd3723", buildScript);
         Assert.Contains("ggml-medium.en.bin", buildScript);
-        Assert.Contains("'runtimes\\win-x64'", buildScript);
+        Assert.Contains("runtimes\\$RuntimeIdentifier", buildScript);
         Assert.Contains("'whisper.dll'", buildScript);
+        Assert.Contains("'Microsoft.AI.Foundry.Local.Core.dll'", buildScript);
+        Assert.Contains("'onnxruntime-genai.dll'", buildScript);
         Assert.Contains("0x8664", buildScript);
+        Assert.Contains("0xAA64", buildScript);
         Assert.Contains("unexpected runtime directories", buildScript);
     }
 

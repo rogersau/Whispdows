@@ -225,12 +225,20 @@ public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
 {
     private readonly ITranscriber _primary;
     private readonly ITranscriber _fallback;
+    private readonly bool _allowMissingPrimaryConfiguration;
+    private readonly bool _allowMissingFallbackConfiguration;
     private bool _disposed;
 
-    public FallbackTranscriber(ITranscriber primary, ITranscriber fallback)
+    public FallbackTranscriber(
+        ITranscriber primary,
+        ITranscriber fallback,
+        bool allowMissingPrimaryConfiguration = true,
+        bool allowMissingFallbackConfiguration = false)
     {
         _primary = primary;
         _fallback = fallback;
+        _allowMissingPrimaryConfiguration = allowMissingPrimaryConfiguration;
+        _allowMissingFallbackConfiguration = allowMissingFallbackConfiguration;
     }
 
     public string ProviderName =>
@@ -239,14 +247,36 @@ public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
     public void ValidateConfiguration()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _fallback.ValidateConfiguration();
-        try
+        if (_allowMissingPrimaryConfiguration)
+        {
+            try
+            {
+                _primary.ValidateConfiguration();
+            }
+            catch (MissingApiKeyException)
+            {
+                // An explicitly configured fallback can operate without the primary key.
+            }
+        }
+        else
         {
             _primary.ValidateConfiguration();
         }
-        catch (MissingApiKeyException)
+
+        if (_allowMissingFallbackConfiguration)
         {
-            // An explicitly configured local fallback can operate without the cloud key.
+            try
+            {
+                _fallback.ValidateConfiguration();
+            }
+            catch (MissingApiKeyException)
+            {
+                // A local primary can operate when its optional online fallback is unconfigured.
+            }
+        }
+        else
+        {
+            _fallback.ValidateConfiguration();
         }
     }
 
@@ -264,7 +294,8 @@ public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
             {
                 return await _primary.TranscribeAsync(wavAudio, cancellationToken);
             }
-            catch (CloudProviderException) when (!cancellationToken.IsCancellationRequested)
+            catch (Exception exception)
+                when (IsFallbackFailure(exception, cancellationToken))
             {
                 wavAudio.Position = 0;
                 return await _fallback.TranscribeAsync(wavAudio, cancellationToken);
@@ -279,7 +310,8 @@ public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
             using var primaryAudio = new MemoryStream(audioBytes, writable: false);
             return await _primary.TranscribeAsync(primaryAudio, cancellationToken);
         }
-        catch (CloudProviderException) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
+            when (IsFallbackFailure(exception, cancellationToken))
         {
             using var fallbackAudio = new MemoryStream(audioBytes, writable: false);
             return await _fallback.TranscribeAsync(fallbackAudio, cancellationToken);
@@ -296,6 +328,16 @@ public sealed class FallbackTranscriber : ITranscriber, IProviderComponent
         _disposed = true;
         _primary.Dispose();
         _fallback.Dispose();
+    }
+
+    private static bool IsFallbackFailure(
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && exception is CloudProviderException
+                or WindowsMlUnavailableException
+                or LocalModelNotFoundException;
     }
 }
 
@@ -778,12 +820,20 @@ public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator,
 {
     private readonly ITextCleaner _primary;
     private readonly ITextCleaner _fallback;
+    private readonly bool _allowMissingPrimaryConfiguration;
+    private readonly bool _allowMissingFallbackConfiguration;
     private bool _disposed;
 
-    public FallbackTextCleaner(ITextCleaner primary, ITextCleaner fallback)
+    public FallbackTextCleaner(
+        ITextCleaner primary,
+        ITextCleaner fallback,
+        bool allowMissingPrimaryConfiguration = true,
+        bool allowMissingFallbackConfiguration = false)
     {
         _primary = primary;
         _fallback = fallback;
+        _allowMissingPrimaryConfiguration = allowMissingPrimaryConfiguration;
+        _allowMissingFallbackConfiguration = allowMissingFallbackConfiguration;
     }
 
     public string ProviderName =>
@@ -794,19 +844,40 @@ public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator,
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_primary is IConfigurationValidator primaryValidator)
         {
-            try
+            if (_allowMissingPrimaryConfiguration)
+            {
+                try
+                {
+                    primaryValidator.ValidateConfiguration();
+                }
+                catch (MissingApiKeyException)
+                {
+                    // An explicitly configured fallback can operate without the primary key.
+                }
+            }
+            else
             {
                 primaryValidator.ValidateConfiguration();
-            }
-            catch (MissingApiKeyException)
-            {
-                // An explicitly configured basic fallback can operate without the cloud key.
             }
         }
 
         if (_fallback is IConfigurationValidator fallbackValidator)
         {
-            fallbackValidator.ValidateConfiguration();
+            if (_allowMissingFallbackConfiguration)
+            {
+                try
+                {
+                    fallbackValidator.ValidateConfiguration();
+                }
+                catch (MissingApiKeyException)
+                {
+                    // A local primary can operate when its optional online fallback is unconfigured.
+                }
+            }
+            else
+            {
+                fallbackValidator.ValidateConfiguration();
+            }
         }
     }
 
@@ -820,7 +891,8 @@ public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator,
         {
             return await _primary.CleanAsync(transcript, cancellationToken);
         }
-        catch (CloudProviderException) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception exception)
+            when (IsFallbackFailure(exception, cancellationToken))
         {
             return await _fallback.CleanAsync(transcript, cancellationToken);
         }
@@ -843,6 +915,16 @@ public sealed class FallbackTextCleaner : ITextCleaner, IConfigurationValidator,
         {
             fallbackDisposable.Dispose();
         }
+    }
+
+    private static bool IsFallbackFailure(
+        Exception exception,
+        CancellationToken cancellationToken)
+    {
+        return !cancellationToken.IsCancellationRequested
+            && exception is CloudProviderException
+                or WindowsMlUnavailableException
+                or LocalModelNotFoundException;
     }
 }
 

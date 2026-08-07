@@ -2,6 +2,8 @@
 param(
     [ValidatePattern('^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$')]
     [string]$Version = '0.1.0',
+    [ValidateSet('win-x64', 'win-arm64')]
+    [string]$RuntimeIdentifier = 'win-x64',
     [switch]$SkipModelDownload,
     [switch]$SkipInstaller
 )
@@ -11,9 +13,10 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactsRoot = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot 'artifacts'))
 $publishDirectory = [System.IO.Path]::GetFullPath(
-    (Join-Path $artifactsRoot 'publish\win-x64'))
+    (Join-Path $artifactsRoot "publish\$RuntimeIdentifier"))
 $installerDirectory = [System.IO.Path]::GetFullPath(
     (Join-Path $artifactsRoot 'installer'))
+$platform = if ($RuntimeIdentifier -eq 'win-arm64') { 'ARM64' } else { 'x64' }
 $models = @(
     @{
         Name = 'small.en'
@@ -45,10 +48,12 @@ function Assert-ChildPath {
     }
 }
 
-function Assert-X64PortableExecutable {
+function Assert-PortableExecutable {
     param(
         [Parameter(Mandatory)]
-        [string]$Path
+        [string]$Path,
+        [Parameter(Mandatory)]
+        [int]$ExpectedMachine
     )
 
     $stream = [System.IO.File]::OpenRead($Path)
@@ -70,8 +75,8 @@ function Assert-X64PortableExecutable {
         }
 
         $machine = $reader.ReadUInt16()
-        if ($machine -ne 0x8664) {
-            throw "'$Path' targets PE machine 0x$($machine.ToString('X4')); expected x64 (0x8664)."
+        if ($machine -ne $ExpectedMachine) {
+            throw "'$Path' targets PE machine 0x$($machine.ToString('X4')); expected 0x$($ExpectedMachine.ToString('X4'))."
         }
     }
     finally {
@@ -113,9 +118,10 @@ Push-Location $repositoryRoot
 try {
     dotnet publish .\src\Whispdows\Whispdows.csproj `
         -c Release `
-        -r win-x64 `
+        -r $RuntimeIdentifier `
         --self-contained true `
         --output $publishDirectory `
+        -p:Platform=$platform `
         -p:Version=$Version `
         -p:PublishSingleFile=false `
         -p:PublishTrimmed=false
@@ -127,7 +133,8 @@ finally {
     Pop-Location
 }
 
-foreach ($architecture in @('win-x86', 'win-arm64')) {
+foreach ($architecture in @('win-x86', 'win-x64', 'win-arm64') |
+        Where-Object { $_ -ne $RuntimeIdentifier }) {
     $extraRuntime = [System.IO.Path]::GetFullPath(
         (Join-Path $publishDirectory "runtimes\$architecture"))
     Assert-ChildPath -Path $extraRuntime -Parent $publishDirectory
@@ -148,19 +155,26 @@ $publishedModels = @(
         Sha1 = '8c30f0e44ce9560643ebd10bbe50cd20eafd3723'
     }
 )
-$nativeRuntimeDirectory = Join-Path $publishDirectory 'runtimes\win-x64'
+$nativeRuntimeDirectory = Join-Path $publishDirectory "runtimes\$RuntimeIdentifier"
 $nativeRuntimeFiles = @(
     'ggml-base-whisper.dll',
     'ggml-cpu-whisper.dll',
     'ggml-whisper.dll',
     'whisper.dll'
 ) | ForEach-Object { Join-Path $nativeRuntimeDirectory $_ }
+$windowsMlRuntimeFiles = @(
+    'Microsoft.AI.Foundry.Local.Core.dll',
+    'Microsoft.Windows.AI.MachineLearning.dll',
+    'onnxruntime.dll',
+    'onnxruntime-genai.dll'
+) | ForEach-Object { Join-Path $publishDirectory $_ }
 foreach ($requiredFile in @(
     (Join-Path $publishDirectory 'Whispdows.exe'),
     (Join-Path $publishDirectory 'README.md'),
     (Join-Path $publishDirectory 'settings.example.json'),
     $publishedModels.Path,
-    $nativeRuntimeFiles
+    $nativeRuntimeFiles,
+    $windowsMlRuntimeFiles
 )) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Published release is missing '$requiredFile'."
@@ -169,15 +183,16 @@ foreach ($requiredFile in @(
 
 $unexpectedRuntimeDirectories = @(
     Get-ChildItem -LiteralPath (Join-Path $publishDirectory 'runtimes') -Directory |
-        Where-Object Name -ne 'win-x64'
+        Where-Object Name -ne $RuntimeIdentifier
 )
 if ($unexpectedRuntimeDirectories.Count -gt 0) {
     throw "Published release contains unexpected runtime directories: $($unexpectedRuntimeDirectories.Name -join ', ')."
 }
 
-Assert-X64PortableExecutable -Path (Join-Path $publishDirectory 'Whispdows.exe')
+$expectedMachine = if ($RuntimeIdentifier -eq 'win-arm64') { 0xAA64 } else { 0x8664 }
+Assert-PortableExecutable -Path (Join-Path $publishDirectory 'Whispdows.exe') -ExpectedMachine $expectedMachine
 foreach ($nativeRuntimeFile in $nativeRuntimeFiles) {
-    Assert-X64PortableExecutable -Path $nativeRuntimeFile
+    Assert-PortableExecutable -Path $nativeRuntimeFile -ExpectedMachine $expectedMachine
 }
 
 foreach ($model in $publishedModels) {
@@ -190,6 +205,10 @@ foreach ($model in $publishedModels) {
 }
 
 if (-not $SkipInstaller) {
+    if ($RuntimeIdentifier -ne 'win-x64') {
+        throw "The current Inno Setup installer targets x64. Use -SkipInstaller when publishing $RuntimeIdentifier."
+    }
+
     $compiler = Get-Command 'ISCC.exe' -ErrorAction SilentlyContinue
     $compilerPath = if ($compiler) {
         $compiler.Source

@@ -75,6 +75,9 @@ public partial class SettingsWindow : Window
         SelectValue(TranscriptionProviderBox, settings.Transcription.Provider);
         LanguageBox.Text = settings.Transcription.Language;
         FallbackLocalBox.IsChecked = settings.Transcription.FallbackToLocal;
+        FallbackOnlineBox.IsChecked = settings.Transcription.FallbackToOnline;
+        SelectValue(OnlineTranscriptionProviderBox, settings.Transcription.OnlineProvider);
+        WindowsMlTranscriptionModelBox.Text = settings.Transcription.WindowsMlModel;
         LocalModelPathBox.Text = settings.Transcription.LocalModelPath;
         LocalThreadsBox.Text = settings.Transcription.LocalThreads.ToString(CultureInfo.InvariantCulture);
         OpenAiModelBox.Text = settings.Transcription.OpenaiModel;
@@ -84,6 +87,10 @@ public partial class SettingsWindow : Window
 
         SelectValue(CleanupProviderBox, settings.Cleanup.Provider);
         SelectValue(CleanupStyleBox, settings.Cleanup.Style);
+        SelectValue(OnlineCleanupProviderBox, settings.Cleanup.OnlineProvider);
+        FallbackOnlineCleanupBox.IsChecked = settings.Cleanup.FallbackToOnline;
+        WindowsMlCleanupModelBox.Text = settings.Cleanup.WindowsMlModel;
+        OnlineCleanupModelBox.Text = settings.Cleanup.OnlineModel;
         CleanupModelBox.Text = settings.Cleanup.Model;
         AzureEndpointBox.Text = settings.Cleanup.AzureEndpoint;
         LocalCleanupModelBox.Text = settings.Cleanup.LocalModel;
@@ -165,6 +172,16 @@ public partial class SettingsWindow : Window
         UpdateProviderPanels();
     }
 
+    private void TranscriptionFallbackBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateProviderPanels();
+    }
+
+    private void CleanupFallbackOnlineBox_OnChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateProviderPanels();
+    }
+
     private void LocalCleanupModelBox_OnTextChanged(
         object sender,
         WpfControls.TextChangedEventArgs e)
@@ -185,26 +202,49 @@ public partial class SettingsWindow : Window
     private void UpdateProviderPanels()
     {
         var transcriptionProvider = SelectedValue(TranscriptionProviderBox);
+        var isLocalTranscription = transcriptionProvider is "windowsml" or "local";
+        var onlineTranscriptionProvider = SelectedValue(OnlineTranscriptionProviderBox);
+        var usesOnlineTranscriptionFallback = isLocalTranscription
+            && FallbackOnlineBox.IsChecked == true
+            && onlineTranscriptionProvider != "none";
+
+        WindowsMlTranscriptionPanel.Visibility = transcriptionProvider == "windowsml"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         LocalTranscriptionPanel.Visibility = transcriptionProvider == "local"
             ? Visibility.Visible
             : Visibility.Collapsed;
+        OnlineTranscriptionPanel.Visibility = isLocalTranscription
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         OpenAiTranscriptionPanel.Visibility = transcriptionProvider == "openai"
+            || (usesOnlineTranscriptionFallback && onlineTranscriptionProvider == "openai")
             ? Visibility.Visible
             : Visibility.Collapsed;
         GroqTranscriptionPanel.Visibility = transcriptionProvider == "groq"
+            || (usesOnlineTranscriptionFallback && onlineTranscriptionProvider == "groq")
             ? Visibility.Visible
             : Visibility.Collapsed;
         AzureTranscriptionPanel.Visibility = transcriptionProvider == "azure"
+            || (usesOnlineTranscriptionFallback && onlineTranscriptionProvider == "azure")
             ? Visibility.Visible
             : Visibility.Collapsed;
-        FallbackLocalBox.Visibility = transcriptionProvider == "local"
+        FallbackLocalBox.Visibility = isLocalTranscription
             ? Visibility.Collapsed
             : Visibility.Visible;
 
         var cleanupProvider = SelectedValue(CleanupProviderBox);
         var isCloudCleanup = cleanupProvider is "azure-openai" or "openai" or "groq";
         var isLocalAiCleanup = cleanupProvider == "ollama";
-        var hasAiCleanup = isCloudCleanup || isLocalAiCleanup;
+        var isWindowsMlCleanup = cleanupProvider == "windowsml";
+        var onlineCleanupProvider = SelectedValue(OnlineCleanupProviderBox);
+        var usesOnlineCleanupFallback = isWindowsMlCleanup
+            && FallbackOnlineCleanupBox.IsChecked == true
+            && onlineCleanupProvider != "none";
+        var hasAiCleanup = isCloudCleanup || isLocalAiCleanup || isWindowsMlCleanup;
+        WindowsMlCleanupPanel.Visibility = isWindowsMlCleanup
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         LocalCleanupPanel.Visibility = isLocalAiCleanup
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -212,6 +252,7 @@ public partial class SettingsWindow : Window
             ? Visibility.Visible
             : Visibility.Collapsed;
         AzureCleanupPanel.Visibility = cleanupProvider == "azure-openai"
+            || (usesOnlineCleanupFallback && onlineCleanupProvider == "azure-openai")
             ? Visibility.Visible
             : Visibility.Collapsed;
         FallbackBasicBox.Visibility = hasAiCleanup
@@ -225,6 +266,8 @@ public partial class SettingsWindow : Window
 
         CleanupPrivacyText.Text = cleanupProvider switch
         {
+            "windowsml" =>
+                "Windows ML cleanup runs on this PC. If enabled, an unavailable local model can use the selected online provider, then basic cleanup.",
             "ollama" =>
                 "Cleanup runs through the local endpoint on this PC. Whispdows does not send the transcript to a cloud cleanup service.",
             "azure-openai" or "openai" or "groq" =>
@@ -516,6 +559,12 @@ public partial class SettingsWindow : Window
             errors);
         settings.Transcription.Language = LanguageBox.Text.Trim();
         settings.Transcription.FallbackToLocal = FallbackLocalBox.IsChecked == true;
+        settings.Transcription.FallbackToOnline = FallbackOnlineBox.IsChecked == true;
+        settings.Transcription.OnlineProvider = ReadSelectedValue(
+            OnlineTranscriptionProviderBox,
+            "transcription.onlineProvider",
+            errors);
+        settings.Transcription.WindowsMlModel = WindowsMlTranscriptionModelBox.Text.Trim();
         settings.Transcription.LocalModelPath = LocalModelPathBox.Text.Trim();
         settings.Transcription.LocalThreads = ReadInteger(
             LocalThreadsBox,
@@ -535,6 +584,13 @@ public partial class SettingsWindow : Window
             CleanupStyleBox,
             "cleanup.style",
             errors);
+        settings.Cleanup.OnlineProvider = ReadSelectedValue(
+            OnlineCleanupProviderBox,
+            "cleanup.onlineProvider",
+            errors);
+        settings.Cleanup.FallbackToOnline = FallbackOnlineCleanupBox.IsChecked == true;
+        settings.Cleanup.WindowsMlModel = WindowsMlCleanupModelBox.Text.Trim();
+        settings.Cleanup.OnlineModel = OnlineCleanupModelBox.Text.Trim();
         settings.Cleanup.Model = CleanupModelBox.Text.Trim();
         settings.Cleanup.AzureEndpoint = AzureEndpointBox.Text.Trim();
         settings.Cleanup.LocalModel = LocalCleanupModelBox.Text.Trim();
@@ -706,6 +762,16 @@ public partial class SettingsWindow : Window
             return LanguageBox;
         }
 
+        if (error.StartsWith("transcription.windowsMlModel", StringComparison.OrdinalIgnoreCase))
+        {
+            return WindowsMlTranscriptionModelBox;
+        }
+
+        if (error.StartsWith("transcription.onlineProvider", StringComparison.OrdinalIgnoreCase))
+        {
+            return OnlineTranscriptionProviderBox;
+        }
+
         if (error.StartsWith("transcription.localModelPath", StringComparison.OrdinalIgnoreCase))
         {
             return LocalModelPathBox;
@@ -719,6 +785,21 @@ public partial class SettingsWindow : Window
         if (error.StartsWith("cleanup.provider", StringComparison.OrdinalIgnoreCase))
         {
             return CleanupProviderBox;
+        }
+
+        if (error.StartsWith("cleanup.windowsMlModel", StringComparison.OrdinalIgnoreCase))
+        {
+            return WindowsMlCleanupModelBox;
+        }
+
+        if (error.StartsWith("cleanup.onlineProvider", StringComparison.OrdinalIgnoreCase))
+        {
+            return OnlineCleanupProviderBox;
+        }
+
+        if (error.StartsWith("cleanup.onlineModel", StringComparison.OrdinalIgnoreCase))
+        {
+            return OnlineCleanupModelBox;
         }
 
         if (error.StartsWith("cleanup.localModel", StringComparison.OrdinalIgnoreCase))
@@ -783,9 +864,14 @@ public partial class SettingsWindow : Window
             .Replace("audio.maxSeconds", "Maximum recording length", StringComparison.Ordinal)
             .Replace("transcription.provider", "Transcription provider", StringComparison.Ordinal)
             .Replace("transcription.language", "Language code", StringComparison.Ordinal)
+            .Replace("transcription.windowsMlModel", "Windows ML transcription model", StringComparison.Ordinal)
+            .Replace("transcription.onlineProvider", "Online transcription fallback", StringComparison.Ordinal)
             .Replace("transcription.localModelPath", "Whisper model path", StringComparison.Ordinal)
             .Replace("transcription.localThreads", "CPU threads", StringComparison.Ordinal)
             .Replace("cleanup.provider", "Cleanup provider", StringComparison.Ordinal)
+            .Replace("cleanup.windowsMlModel", "Windows ML cleanup model", StringComparison.Ordinal)
+            .Replace("cleanup.onlineProvider", "Online cleanup fallback", StringComparison.Ordinal)
+            .Replace("cleanup.onlineModel", "Online cleanup model", StringComparison.Ordinal)
             .Replace("cleanup.localModel", "Local cleanup model", StringComparison.Ordinal)
             .Replace("cleanup.localEndpoint", "Local cleanup endpoint", StringComparison.Ordinal)
             .Replace("cleanup.azureEndpoint", "Azure OpenAI endpoint", StringComparison.Ordinal)

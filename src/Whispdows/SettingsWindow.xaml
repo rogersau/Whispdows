@@ -410,6 +410,7 @@
                             <ComboBox x:Name="TranscriptionProviderBox"
                                       Grid.Column="1"
                                       SelectionChanged="TranscriptionProviderBox_OnSelectionChanged">
+                                <ComboBoxItem Tag="windowsml" Content="Windows ML (on-device)" />
                                 <ComboBoxItem Tag="local" Content="Local Whisper (offline)" />
                                 <ComboBoxItem Tag="azure" Content="Azure Speech" />
                                 <ComboBoxItem Tag="openai" Content="OpenAI" />
@@ -421,7 +422,39 @@
                             <TextBox x:Name="LanguageBox" Grid.Row="1" Grid.Column="1" />
                         </Grid>
                         <CheckBox x:Name="FallbackLocalBox"
-                                  Content="Fall back to local Whisper if cloud transcription fails" />
+                                  Content="Fall back to on-device Windows ML if cloud transcription fails" />
+
+                        <Border x:Name="WindowsMlTranscriptionPanel"
+                                Margin="0,12,0,0"
+                                Padding="14"
+                                Background="#131925"
+                                BorderBrush="#2B4960"
+                                BorderThickness="1"
+                                CornerRadius="8">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold"
+                                           Foreground="#DDEAFF"
+                                           Text="Windows ML on-device transcription" />
+                                <TextBlock Margin="0,4,0,8"
+                                           Foreground="#91A2BD"
+                                           Text="Foundry Local downloads the selected model on first use and chooses the best available NPU, GPU, or CPU execution provider."
+                                           TextWrapping="Wrap" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="170" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Label Target="{Binding ElementName=WindowsMlTranscriptionModelBox}"
+                                           Content="Model _alias" />
+                                    <TextBox x:Name="WindowsMlTranscriptionModelBox"
+                                             Grid.Column="1"
+                                             ToolTip="A model alias from the Foundry Local catalog, such as whisper-tiny." />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
 
                         <Border x:Name="LocalTranscriptionPanel"
                                 Margin="0,12,0,0"
@@ -451,6 +484,42 @@
                                          Grid.Row="1"
                                          Grid.Column="1"
                                          ToolTip="Use 0 to let Whispdows choose automatically." />
+                            </Grid>
+                        </Border>
+
+                        <Border x:Name="OnlineTranscriptionPanel"
+                                Margin="0,12,0,0"
+                                Padding="12"
+                                Background="#131925"
+                                BorderBrush="#26324A"
+                                BorderThickness="1"
+                                CornerRadius="8">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Label Target="{Binding ElementName=OnlineTranscriptionProviderBox}"
+                                       Content="Online _fallback" />
+                                <ComboBox x:Name="OnlineTranscriptionProviderBox"
+                                          Grid.Column="1"
+                                          SelectionChanged="TranscriptionProviderBox_OnSelectionChanged">
+                                    <ComboBoxItem Tag="none" Content="Do not use online fallback" />
+                                    <ComboBoxItem Tag="openai" Content="OpenAI" />
+                                    <ComboBoxItem Tag="groq" Content="Groq" />
+                                    <ComboBoxItem Tag="azure" Content="Azure Speech" />
+                                </ComboBox>
+                                <CheckBox x:Name="FallbackOnlineBox"
+                                          Grid.Row="1"
+                                          Grid.ColumnSpan="2"
+                                          Margin="0,8,0,0"
+                                          Checked="TranscriptionFallbackBox_OnChanged"
+                                          Unchecked="TranscriptionFallbackBox_OnChanged"
+                                          Content="Use the online fallback if the local provider is unavailable" />
                             </Grid>
                         </Border>
 
@@ -534,6 +603,7 @@
                             <ComboBox x:Name="CleanupProviderBox"
                                       Grid.Column="1"
                                       SelectionChanged="CleanupProviderBox_OnSelectionChanged">
+                                <ComboBoxItem Tag="windowsml" Content="Windows ML (on-device)" />
                                 <ComboBoxItem Tag="basic" Content="Basic cleanup (offline)" />
                                 <ComboBoxItem Tag="ollama" Content="Local AI model (Ollama)" />
                                 <ComboBoxItem Tag="azure-openai" Content="Azure OpenAI" />
@@ -551,6 +621,63 @@
                                 <ComboBoxItem Tag="fragment" Content="Natural fragments" />
                             </ComboBox>
                         </Grid>
+
+                        <Border x:Name="WindowsMlCleanupPanel"
+                                Margin="0,12,0,0"
+                                Padding="14"
+                                Background="#131925"
+                                BorderBrush="#2B4960"
+                                BorderThickness="1"
+                                CornerRadius="8">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold"
+                                           Foreground="#DDEAFF"
+                                           Text="Windows ML on-device cleanup" />
+                                <TextBlock Margin="0,4,0,8"
+                                           Foreground="#91A2BD"
+                                           Text="The local chat model runs on this PC. If it is unavailable, Whispdows can try an online cleanup model and then basic cleanup."
+                                           TextWrapping="Wrap" />
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="170" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <Label Target="{Binding ElementName=WindowsMlCleanupModelBox}"
+                                           Content="Model _alias" />
+                                    <TextBox x:Name="WindowsMlCleanupModelBox"
+                                             Grid.Column="1"
+                                             ToolTip="A chat model alias from the Foundry Local catalog, such as qwen2.5-0.5b." />
+                                    <Label Grid.Row="1"
+                                           Target="{Binding ElementName=OnlineCleanupProviderBox}"
+                                           Content="Online _fallback" />
+                                    <ComboBox x:Name="OnlineCleanupProviderBox"
+                                              Grid.Row="1"
+                                              Grid.Column="1"
+                                              SelectionChanged="CleanupProviderBox_OnSelectionChanged">
+                                        <ComboBoxItem Tag="none" Content="Do not use online fallback" />
+                                        <ComboBoxItem Tag="openai" Content="OpenAI" />
+                                        <ComboBoxItem Tag="groq" Content="Groq" />
+                                        <ComboBoxItem Tag="azure-openai" Content="Azure OpenAI" />
+                                    </ComboBox>
+                                    <Label Grid.Row="2"
+                                           Target="{Binding ElementName=OnlineCleanupModelBox}"
+                                           Content="Online _model" />
+                                    <TextBox x:Name="OnlineCleanupModelBox"
+                                             Grid.Row="2"
+                                             Grid.Column="1" />
+                                </Grid>
+                                <CheckBox x:Name="FallbackOnlineCleanupBox"
+                                          Margin="0,8,0,0"
+                                          Checked="CleanupFallbackOnlineBox_OnChanged"
+                                          Unchecked="CleanupFallbackOnlineBox_OnChanged"
+                                          Content="Use the online fallback if Windows ML cleanup is unavailable" />
+                            </StackPanel>
+                        </Border>
 
                         <Border x:Name="LocalCleanupPanel"
                                 Margin="0,12,0,0"
