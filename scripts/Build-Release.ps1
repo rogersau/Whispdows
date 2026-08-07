@@ -17,9 +17,20 @@ $publishDirectory = [System.IO.Path]::GetFullPath(
 $installerDirectory = [System.IO.Path]::GetFullPath(
     (Join-Path $artifactsRoot 'installer'))
 $platform = if ($RuntimeIdentifier -eq 'win-arm64') { 'ARM64' } else { 'x64' }
-$modelPath = [System.IO.Path]::GetFullPath(
-    (Join-Path $repositoryRoot 'models\ggml-small.en.bin'))
-$expectedModelSha1 = 'db8a495a91d927739e50b3fc1cc4c6b8f6c2d022'
+$models = @(
+    @{
+        Name = 'small.en'
+        Path = [System.IO.Path]::GetFullPath(
+            (Join-Path $repositoryRoot 'models\ggml-small.en.bin'))
+        Sha1 = 'db8a495a91d927739e50b3fc1cc4c6b8f6c2d022'
+    },
+    @{
+        Name = 'medium.en'
+        Path = [System.IO.Path]::GetFullPath(
+            (Join-Path $repositoryRoot 'models\ggml-medium.en.bin'))
+        Sha1 = '8c30f0e44ce9560643ebd10bbe50cd20eafd3723'
+    }
+)
 
 function Assert-ChildPath {
     param(
@@ -78,16 +89,24 @@ Assert-ChildPath -Path $publishDirectory -Parent $artifactsRoot
 Assert-ChildPath -Path $installerDirectory -Parent $artifactsRoot
 
 if (-not $SkipModelDownload) {
-    & (Join-Path $PSScriptRoot 'Get-WhisperModel.ps1') -Destination $modelPath
+    foreach ($model in $models) {
+        & (Join-Path $PSScriptRoot 'Get-WhisperModel.ps1') `
+            -Model $model.Name `
+            -Destination $model.Path
+    }
 }
 
-if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf)) {
-    throw "The release model is missing at '$modelPath'. Run Get-WhisperModel.ps1 first."
-}
+foreach ($model in $models) {
+    if (-not (Test-Path -LiteralPath $model.Path -PathType Leaf)) {
+        throw "The release model is missing at '$($model.Path)'. Run Get-WhisperModel.ps1 -Model $($model.Name) first."
+    }
 
-$modelHash = (Get-FileHash -LiteralPath $modelPath -Algorithm SHA1).Hash.ToLowerInvariant()
-if ($modelHash -ne $expectedModelSha1) {
-    throw "The release model hash does not match the pinned Whisper small.en model."
+    $modelHash = (
+        Get-FileHash -LiteralPath $model.Path -Algorithm SHA1
+    ).Hash.ToLowerInvariant()
+    if ($modelHash -ne $model.Sha1) {
+        throw "The release model hash does not match the pinned Whisper $($model.Name) model."
+    }
 }
 
 if (Test-Path -LiteralPath $publishDirectory) {
@@ -124,7 +143,18 @@ foreach ($architecture in @('win-x86', 'win-x64', 'win-arm64') |
     }
 }
 
-$publishedModel = Join-Path $publishDirectory 'models\ggml-small.en.bin'
+$publishedModels = @(
+    @{
+        Name = 'small.en'
+        Path = Join-Path $publishDirectory 'models\ggml-small.en.bin'
+        Sha1 = 'db8a495a91d927739e50b3fc1cc4c6b8f6c2d022'
+    },
+    @{
+        Name = 'medium.en'
+        Path = Join-Path $publishDirectory 'models\ggml-medium.en.bin'
+        Sha1 = '8c30f0e44ce9560643ebd10bbe50cd20eafd3723'
+    }
+)
 $nativeRuntimeDirectory = Join-Path $publishDirectory "runtimes\$RuntimeIdentifier"
 $nativeRuntimeFiles = @(
     'ggml-base-whisper.dll',
@@ -142,7 +172,7 @@ foreach ($requiredFile in @(
     (Join-Path $publishDirectory 'Whispdows.exe'),
     (Join-Path $publishDirectory 'README.md'),
     (Join-Path $publishDirectory 'settings.example.json'),
-    $publishedModel,
+    $publishedModels.Path,
     $nativeRuntimeFiles,
     $windowsMlRuntimeFiles
 )) {
@@ -165,11 +195,13 @@ foreach ($nativeRuntimeFile in $nativeRuntimeFiles) {
     Assert-PortableExecutable -Path $nativeRuntimeFile -ExpectedMachine $expectedMachine
 }
 
-$publishedModelHash = (
-    Get-FileHash -LiteralPath $publishedModel -Algorithm SHA1
-).Hash.ToLowerInvariant()
-if ($publishedModelHash -ne $expectedModelSha1) {
-    throw "The published model hash does not match the pinned model."
+foreach ($model in $publishedModels) {
+    $publishedModelHash = (
+        Get-FileHash -LiteralPath $model.Path -Algorithm SHA1
+    ).Hash.ToLowerInvariant()
+    if ($publishedModelHash -ne $model.Sha1) {
+        throw "The published $($model.Name) model hash does not match the pinned model."
+    }
 }
 
 if (-not $SkipInstaller) {

@@ -42,6 +42,11 @@
              Condition="Exists('..\..\models\ggml-small.en.bin')"
              CopyToOutputDirectory="PreserveNewest"
              CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\models\ggml-medium.en.bin"
+             Link="models\ggml-medium.en.bin"
+             Condition="Exists('..\..\models\ggml-medium.en.bin')"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

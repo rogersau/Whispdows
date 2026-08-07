@@ -12,6 +12,8 @@ public sealed class SettingsTests
         var settings = sandbox.Loader.LoadOrCreate();
 
         Assert.True(settings.Enabled);
+        Assert.True(settings.Features.Transcribe);
+        Assert.True(settings.Features.MeetingNotes);
         Assert.Equal("RightCtrl", settings.Hotkey.Shortcut);
         Assert.Equal(90, settings.Audio.MaxSeconds);
         Assert.Equal("windowsml", settings.Transcription.Provider);
@@ -21,6 +23,10 @@ public sealed class SettingsTests
         Assert.Equal("windowsml", settings.Cleanup.Provider);
         Assert.Equal("qwen2.5-0.5b", settings.Cleanup.WindowsMlModel);
         Assert.Equal("gpt-4o-mini", settings.Cleanup.OnlineModel);
+        Assert.Equal("auto", settings.MeetingNotes.TranscriptionProvider);
+        Assert.Equal("models/ggml-medium.en.bin", settings.MeetingNotes.LocalModelPath);
+        Assert.Equal("auto", settings.MeetingNotes.NotesProvider);
+        Assert.Equal("~/MeetingNotes", settings.MeetingNotes.OutputDirectory);
         Assert.Equal("gemma3:1b", settings.Cleanup.LocalModel);
         Assert.Equal("http://127.0.0.1:11434/v1", settings.Cleanup.LocalEndpoint);
         Assert.True(File.Exists(sandbox.Paths.SettingsFile));
@@ -28,6 +34,7 @@ public sealed class SettingsTests
         var json = File.ReadAllText(sandbox.Paths.SettingsFile);
         Assert.Contains("\"launchAtLogin\": false", json);
         Assert.Contains("\"restoreDelayMs\": 175", json);
+        Assert.Contains("\"meetingNotes\": true", json);
     }
 
     [Fact]
@@ -138,17 +145,50 @@ public sealed class SettingsTests
         settings.Cleanup.Model = "gpt-5.4-nano";
         settings.Cleanup.AzureEndpoint =
             "https://resource.services.ai.azure.com/openai/v1";
+        settings.Features.Transcribe = false;
+        settings.MeetingNotes.OutputDirectory = "D:\\PrivateMeetings";
 
         var snapshot = SettingsSnapshot.Clone(settings);
         snapshot.Hotkey.Shortcut = "RightCtrl";
         snapshot.Cleanup.Model = "other-model";
         snapshot.Cleanup.AzureEndpoint = "https://other.example/openai/v1";
+        snapshot.Features.Transcribe = true;
+        snapshot.MeetingNotes.OutputDirectory = "~/Elsewhere";
 
         Assert.Equal("F13", settings.Hotkey.Shortcut);
         Assert.Equal("gpt-5.4-nano", settings.Cleanup.Model);
         Assert.Equal(
             "https://resource.services.ai.azure.com/openai/v1",
             settings.Cleanup.AzureEndpoint);
+        Assert.False(settings.Features.Transcribe);
+        Assert.Equal("D:\\PrivateMeetings", settings.MeetingNotes.OutputDirectory);
+    }
+
+    [Fact]
+    public void Save_requires_at_least_one_installed_feature()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.Features.Transcribe = false;
+        settings.Features.MeetingNotes = false;
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("At least one", exception.Message);
+    }
+
+    [Fact]
+    public void Save_requires_a_loopback_endpoint_for_local_meeting_notes()
+    {
+        using var sandbox = new TestSandbox();
+        var settings = AppSettings.CreateDefault();
+        settings.MeetingNotes.OllamaEndpoint = "https://example.com";
+
+        var exception = Assert.Throws<SettingsValidationException>(
+            () => sandbox.Loader.Save(settings));
+
+        Assert.Contains("loopback", exception.Message);
     }
 
     [Fact]

@@ -17,6 +17,14 @@ public sealed class ReleaseContractTests
         Assert.Contains("onlyifdoesntexist uninsneveruninstall", installer);
         Assert.Contains("RemoveUserDataOnUninstall", installer);
         Assert.Contains("Parameters: \"--enable-startup\"", installer);
+        Assert.Contains("Description: \"Transcribe only\"", installer);
+        Assert.Contains("Description: \"Meeting Notes only\"", installer);
+        Assert.Contains("Description: \"Transcribe and Meeting Notes\"", installer);
+        Assert.Contains("ggml-small.en.bin", installer);
+        Assert.Contains("ggml-medium.en.bin", installer);
+        Assert.Contains("--configure-features=transcribe", installer);
+        Assert.Contains("--configure-features=meeting-notes", installer);
+        Assert.Contains("--configure-features=both", installer);
         Assert.Contains("RegQueryStringValue", installer);
         Assert.DoesNotContain("StringChangeEx", installer);
         Assert.DoesNotContain("PrivilegesRequired=admin", installer);
@@ -54,6 +62,8 @@ public sealed class ReleaseContractTests
         Assert.Contains("PublishSingleFile=false", buildScript);
         Assert.Contains("PublishTrimmed=false", buildScript);
         Assert.Contains("db8a495a91d927739e50b3fc1cc4c6b8f6c2d022", buildScript);
+        Assert.Contains("8c30f0e44ce9560643ebd10bbe50cd20eafd3723", buildScript);
+        Assert.Contains("ggml-medium.en.bin", buildScript);
         Assert.Contains("runtimes\\$RuntimeIdentifier", buildScript);
         Assert.Contains("'whisper.dll'", buildScript);
         Assert.Contains("'Microsoft.AI.Foundry.Local.Core.dll'", buildScript);
@@ -75,6 +85,9 @@ public sealed class ReleaseContractTests
         Assert.Contains("no audio or transcript is sent over the network", readme);
         Assert.Contains("API keys", readme);
         Assert.Contains("SmartScreen", readme);
+        Assert.Contains("system audio", readme);
+        Assert.Contains("MeetingNotes", readme);
+        Assert.Contains("Ollama", readme);
     }
 
     [Fact]
@@ -88,6 +101,7 @@ public sealed class ReleaseContractTests
         Assert.Contains(
             "<ApplicationIcon>Assets\\whispdows.ico</ApplicationIcon>",
             project);
+        Assert.Contains("models\\ggml-medium.en.bin", project);
         Assert.DoesNotContain("SystemIcons.Application", trayMenu);
 
         var resources = typeof(TrayMenu).Assembly.GetManifestResourceNames();

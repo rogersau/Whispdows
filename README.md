@@ -2,8 +2,8 @@
 
 <div align="center">
   <img src="src/Whispdows/Assets/whispdows-app-master.png" alt="Whispdows microphone icon" width="180">
-  <h3>Hold a key. Speak naturally. Keep typing.</h3>
-  <p>A fast, tray-first voice layer for every text field on Windows.</p>
+  <h3>Dictation and private meeting notes from the Windows tray.</h3>
+  <p>Hold a key to type, or record system audio and your microphone into local notes.</p>
   <p>
     <img alt="Windows 11 x64 and ARM64" src="https://img.shields.io/badge/Windows-11%2024H2%20x64%20%7C%20ARM64-0078D4?logo=windows&logoColor=white">
     <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet&logoColor=white">
@@ -12,9 +12,18 @@
   </p>
 </div>
 
-Whispdows is a small Windows tray application for hold-to-talk AI dictation. Hold `RightCtrl`, speak, release, and the cleaned result is pasted into the field that was active when you started.
+Whispdows is a small Windows tray application for hold-to-talk AI dictation and
+Granola-style meeting notes. Hold `RightCtrl`, speak, release, and the cleaned
+result is pasted into the field that was active when you started. Or choose
+**Start Meeting Recording** to capture system audio plus your microphone and
+produce a private Markdown note.
 
-It is deliberately quiet: no editor window, no browser extension, no Whispdows background service, and no transcript history. Windows ML models and execution-provider packages are downloaded only when local AI is first used, then cached per user.
+There are no accounts, cloud storage, telemetry, browser extensions, or
+Whispdows background service. It is deliberately quiet: no editor window and no
+transcript history. Meeting files stay under `~/MeetingNotes` by default.
+Windows ML models and execution-provider packages are downloaded only when
+local dictation or cleanup is first used, then cached per user. Other network
+traffic occurs only when you explicitly configure a cloud provider.
 
 ## The loop
 
@@ -28,12 +37,25 @@ flowchart LR
     E -->|No| G[Copy result and notify]
 ```
 
+```mermaid
+flowchart LR
+    A[Start Meeting Recording] --> B[Capture system audio + microphone]
+    B --> C[Stop]
+    C --> D[Transcribe]
+    D --> E[Generate summary, decisions, actions]
+    E --> F[Save Markdown + WAV locally]
+```
+
 ## Why it feels good
 
 | Capability | What happens |
 | --- | --- |
 | Hold-to-talk | A global shortcut starts recording and release ends it. `Escape` cancels. |
 | Local first | Windows ML runs transcription and cleanup on-device, choosing the best available NPU, GPU, or CPU execution path. |
+| Meeting notes | WASAPI loopback and microphone capture are mixed into a local WAV; Whisper `medium.en` transcribes it. |
+| Structured output | Every successful meeting note has five summary bullets, decisions, owned action items, and the full transcript. |
+| Failure-safe | If transcription or note generation fails, Whispdows preserves the audio and any available transcript. |
+| Tiny local cleanup | An optional Ollama model can polish transcripts on-device without a cloud API key. |
 | Online fallback | Local transcription and cleanup can fall through to explicitly configured online providers when enabled. |
 | Cloud when useful | Azure Speech, OpenAI, Groq, and Azure OpenAI are supported through explicit settings. |
 | Natural cleanup | Filler words, false starts, punctuation, and obvious transcription mistakes are cleaned without summarising your words. |
@@ -51,7 +73,10 @@ flowchart LR
 - .NET 10 SDK
 - PowerShell
 - A microphone
-- Optional: [Ollama for Windows](https://docs.ollama.com/windows) for local AI cleanup (the packaged installer can offer to install it)
+- An active Windows playback device for meeting system-audio capture
+- Optional [Ollama for Windows](https://docs.ollama.com/windows) and a local
+  chat model for fully offline meeting summaries and AI cleanup; the packaged
+  installer can offer to install Ollama.
 
 ### Run from source
 
@@ -67,16 +92,24 @@ New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\Whispdows"
 Copy-Item "$env:LOCALAPPDATA\Dictate\settings.json" "$env:LOCALAPPDATA\Whispdows\settings.json"
 ```
 
-If a legacy `.env` file exists under `%LOCALAPPDATA%\Whispdows`, Whispdows imports it once, encrypts the values for the current Windows user, and clears the plaintext file.
+Open **Settings…** after launch and enter provider keys there. If a legacy
+`.env` is already present under `%LOCALAPPDATA%\Whispdows`, Whispdows imports it
+on launch, encrypts non-empty values for the current Windows user, and clears
+the plaintext values.
 
-Run the app. The first local dictation or cleanup downloads the selected Windows ML catalog model and required execution-provider packages; later runs use the per-user cache under `%LOCALAPPDATA%\Whispdows\windowsml`.
+Run the app. The first local dictation or cleanup downloads the selected
+Windows ML catalog model and required execution-provider packages; later runs
+use the per-user cache under `%LOCALAPPDATA%\Whispdows\windowsml`. For offline
+meeting transcription with whisper.cpp, download the medium model as well:
 
 ```powershell
+.\scripts\Get-WhisperModel.ps1 -Model medium.en
 dotnet test .\Whispdows.sln --configuration Release
 dotnet run --project .\src\Whispdows\Whispdows.csproj
 ```
 
-Whispdows starts without a normal window. Look in the notification area, enable dictation from the tray menu, focus any editable field, and hold `RightCtrl`.
+Whispdows starts without a normal window. Use the notification-area menu to
+enable dictation or start/stop a meeting recording.
 
 ### Build a self-contained release
 
@@ -95,7 +128,12 @@ artifacts\installer\Whispdows-Setup.exe
 
 For an ARM64 package, publish the app with `-RuntimeIdentifier win-arm64 -SkipInstaller`; the current Inno Setup script emits the x64 installer.
 
-The installer is per-user and does not require administrator access. It installs to `%LOCALAPPDATA%\Programs\Whispdows`; settings, secrets, and logs remain under `%LOCALAPPDATA%\Whispdows` so upgrades do not overwrite them.
+The installer asks you to select **Transcribe only**, **Meeting Notes only**, or
+**Transcribe and Meeting Notes**. It installs only the corresponding Whisper
+model(s). The installer is per-user and does not require administrator access.
+It installs to `%LOCALAPPDATA%\Programs\Whispdows`; settings, encrypted secrets,
+and logs remain under `%LOCALAPPDATA%\Whispdows` so upgrades do not overwrite
+them. Meeting audio and notes remain in your selected MeetingNotes directory.
 
 If Ollama is not already installed, the installer offers an unchecked **Install Ollama for local AI cleanup** task. Selecting it installs the official `Ollama.Ollama` package through Windows Package Manager. The task is hidden when `ollama.exe` is already available, does not download a model, and never removes Ollama when Whispdows is uninstalled. If Windows Package Manager is unavailable, the installer offers to open Ollama's official Windows instructions instead.
 
@@ -112,6 +150,19 @@ Whispdows creates these files on first start:
 
 The complete checked-in settings shape is in [`settings.example.json`](settings.example.json). `secrets.dat` is encrypted with Windows DPAPI for the current user and must not be edited manually. Use the **API keys** section in **Settings…** to add, replace, or clear OpenAI, Groq, and Azure keys. Keys are never displayed in the editor or written to `settings.json`.
 
+For compatibility with scripts, you may create
+`%LOCALAPPDATA%\Whispdows\.env` before launch or **Reload settings**:
+
+```dotenv
+OPENAI_API_KEY=
+GROQ_API_KEY=
+AZURE_SPEECH_KEY=
+```
+
+Whispdows merges non-empty values into `secrets.dat` using Windows DPAPI and
+then clears the plaintext values from `.env`. Empty `.env` entries do not erase
+keys already in secure storage; use **Settings…** to clear a key.
+
 ### Transcription providers
 
 | Provider | Setting | Notes |
@@ -123,6 +174,52 @@ The complete checked-in settings shape is in [`settings.example.json`](settings.
 | `groq` | `transcription.provider` | Groq-hosted transcription; configure `groqModel`. |
 
 Windows ML transcription can fall back to the configured online provider when `fallbackToOnline` is enabled. The older cloud-first configuration can still use `fallbackToLocal` for compatibility. Failed provider calls are not retried.
+
+### Meeting Notes
+
+Use **Start Meeting Recording** in the tray menu. While a meeting is active,
+Whispdows temporarily pauses the dictation hotkey so the two capture workflows
+cannot fight over the microphone. On stop it:
+
+1. mixes the default Windows playback device and selected microphone into a
+   16 kHz mono WAV;
+2. selects OpenAI or Groq transcription when the matching key is configured,
+   otherwise uses local whisper.cpp with `ggml-medium.en.bin`;
+3. sends ten-minute chunks for cloud transcription so normal meetings stay
+   below upload limits;
+4. asks the configured LLM for exactly five summary bullets, decisions, and
+   action items with owners; and
+5. saves `YYYY-MM-DD-HHMM.md` and `YYYY-MM-DD-HHMM.wav` side by side.
+
+The default output is:
+
+```text
+%USERPROFILE%\MeetingNotes\
+```
+
+Successful Markdown has the summary, decisions, and action items at the top,
+then `---`, then the full transcript. A same-minute collision receives `-02`,
+`-03`, and so on; existing notes are never overwritten.
+
+The `meetingNotes.transcriptionProvider` setting accepts `auto`, `local`,
+`openai`, or `groq`. The `meetingNotes.notesProvider` setting accepts `auto`,
+`openai`, `groq`, or `ollama`. In `auto` mode, a configured OpenAI key is
+preferred, then Groq, then the local models. The default local LLM endpoint is
+the loopback-only Ollama endpoint `http://127.0.0.1:11434` and the default model
+is `llama3.2:3b`; install it separately:
+
+Edit meeting-specific values in `settings.json`, then choose **Reload
+settings** from the tray. API keys remain managed through **Settings…** or
+`.env`.
+
+```powershell
+ollama pull llama3.2:3b
+```
+
+To operate fully offline, install both local models, set
+`meetingNotes.transcriptionProvider` to `local`, set
+`meetingNotes.notesProvider` to `ollama`, and do not configure cloud keys.
+Whispdows does not install or start Ollama for you.
 
 ### Cleanup providers
 
@@ -216,12 +313,20 @@ Double-click the tray icon, or right-click it and choose **Settings…**, to edi
 - Repeated shortcut presses are ignored while a recording is processing.
 - If the target changes, the result stays on the clipboard and Whispdows shows `Copied — target changed`.
 - If the target is running as administrator and Whispdows is not, Windows may block automatic input; use the clipboard result manually.
+- Choose **Start Meeting Recording** and **Stop Meeting Recording** from the tray for meetings.
+- Meeting processing can take several minutes with the local medium model.
+- Choose **Open MeetingNotes folder** from the tray to inspect the saved Markdown and WAV.
 
 The cleanup prompt is intentionally conservative. It removes filler and abandoned starts, repairs punctuation, preserves names and technical terms, and handles clear corrections without turning dictation into a summary or an answer.
 
 ## Windows notes
 
-For microphone access, enable **Settings → Privacy & security → Microphone → Let desktop apps access your microphone**.
+For microphone access, enable **Settings → Privacy & security → Microphone →
+Let desktop apps access your microphone**. Whispdows uses standard Windows
+WASAPI loopback for system audio; unlike macOS screen-audio capture, Windows
+does not present a separate screen-recording permission prompt. Keep an active
+default playback device selected. Protected DRM audio may be silent and is not
+bypassed.
 
 The physical `Fn` key is usually handled by keyboard firmware and may not be visible to Windows. If needed, map a hardware button to `F13` and use that as the Whispdows shortcut.
 
@@ -229,13 +334,17 @@ Whispdows uses a global low-level keyboard hook and `SendInput` for paste. It do
 
 ## Privacy model
 
-- Audio and transcripts are held in memory and released after processing or cancellation.
+- Dictation audio and transcripts are held in memory and released after processing or cancellation.
+- Meeting capture uses temporary local files, then keeps only the final Markdown and WAV in the configured MeetingNotes directory.
 - With Windows ML transcription and cleanup, no audio or transcript is sent over the network after the first-use model/runtime download completes.
+- Fully local meeting mode sends nothing over the network: whisper.cpp transcribes and Ollama generates the notes over a loopback connection.
+- Cloud meeting transcription sends bounded WAV chunks to the selected OpenAI or Groq provider.
+- Cloud meeting-note generation sends the full transcript to the selected OpenAI or Groq provider.
 - When an online fallback is enabled, audio or transcript is sent only after the local provider fails and only to the configured provider.
 - Ollama cleanup sends the transcript and fixed instructions only to the configured loopback endpoint, so they do not leave the PC.
 - Cloud transcription sends the completed WAV recording to the selected provider.
 - Cloud cleanup sends only the transcript and fixed cleanup instructions—not surrounding app content, clipboard context, or window contents.
-- There is no telemetry, analytics, remote logging, crash reporting, or transcript history.
+- There is no account system, cloud storage, sync, telemetry, analytics, remote logging, or crash reporting.
 - Local logs contain state, durations, provider names, and exception types only. They do not contain audio, transcript text, clipboard contents, request bodies, API keys, or authorization headers.
 - API keys are stored in `secrets.dat`, encrypted with Windows DPAPI using the current user profile; they are not written to `settings.json` or logs.
 
@@ -246,9 +355,14 @@ The unsigned personal installer may trigger Microsoft Defender SmartScreen. Buil
 ```text
 src/Whispdows/
 ├── AudioRecorder.cs          WASAPI capture and WAV output
+├── MeetingAudioRecorder.cs   file-backed microphone + system-audio capture
+├── MeetingNotesController.cs record → transcribe → generate → archive workflow
+├── MeetingNotesGeneration.cs OpenAI/Groq/Ollama structured-note adapters
+├── MeetingNotesArchive.cs    local Markdown and WAV persistence
+├── ChunkingTranscriber.cs    bounded cloud transcription chunks
 ├── WindowsMlRuntime.cs        Foundry Local lifecycle and per-user model cache
 ├── WindowsMlProviders.cs      Windows ML transcription and cleanup adapters
-├── Transcribers.cs            deprecated GGML compatibility path and orchestration
+├── Transcribers.cs            local Whisper compatibility path and orchestration
 ├── CloudProviders.cs          OpenAI, Groq, and Azure OpenAI clients
 ├── OllamaTextCleaner.cs       loopback-only local AI cleanup adapter
 ├── AzureSpeechTranscriber.cs  Azure Speech client

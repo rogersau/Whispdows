@@ -29,6 +29,15 @@ CloseApplications=yes
 RestartApplications=no
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
+[Types]
+Name: "transcribe"; Description: "Transcribe only"
+Name: "meetingnotes"; Description: "Meeting Notes only"
+Name: "both"; Description: "Transcribe and Meeting Notes"
+
+[Components]
+Name: "transcribe"; Description: "Hold-to-talk transcription"; Types: transcribe both
+Name: "meetingnotes"; Description: "Meeting recording and notes"; Types: meetingnotes both
+
 [Tasks]
 Name: "startup"; Description: "Launch Whispdows when I sign in"; GroupDescription: "Startup:"; Flags: unchecked checkedonce
 Name: "ollama"; Description: "Install &Ollama for local AI cleanup (internet required; about 4 GB plus model storage)"; GroupDescription: "Optional local AI:"; Flags: unchecked; Check: ShouldOfferOllamaInstall
@@ -37,8 +46,14 @@ Name: "ollama"; Description: "Install &Ollama for local AI cleanup (internet req
 Name: "{localappdata}\Whispdows"; Flags: uninsneveruninstall
 
 [Files]
-Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\*"; DestDir: "{app}"; Excludes: "models\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDir}\models\ggml-small.en.bin"; DestDir: "{app}\models"; Components: transcribe; Flags: ignoreversion
+Source: "{#PublishDir}\models\ggml-medium.en.bin"; DestDir: "{app}\models"; Components: meetingnotes; Flags: ignoreversion
 Source: "{#PublishDir}\settings.example.json"; DestDir: "{localappdata}\Whispdows"; DestName: "settings.json"; Flags: onlyifdoesntexist uninsneveruninstall
+
+[InstallDelete]
+Type: files; Name: "{app}\models\ggml-small.en.bin"; Check: not WizardIsComponentSelected('transcribe')
+Type: files; Name: "{app}\models\ggml-medium.en.bin"; Check: not WizardIsComponentSelected('meetingnotes')
 
 [Icons]
 Name: "{group}\Whispdows"; Filename: "{app}\{#MyAppExeName}"
@@ -46,6 +61,9 @@ Name: "{group}\README"; Filename: "{app}\README.md"
 Name: "{group}\Uninstall Whispdows"; Filename: "{uninstallexe}"
 
 [Run]
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--configure-features=transcribe"; Check: WizardIsComponentSelected('transcribe') and not WizardIsComponentSelected('meetingnotes'); Flags: runhidden waituntilterminated
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--configure-features=meeting-notes"; Check: WizardIsComponentSelected('meetingnotes') and not WizardIsComponentSelected('transcribe'); Flags: runhidden waituntilterminated
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--configure-features=both"; Check: WizardIsComponentSelected('transcribe') and WizardIsComponentSelected('meetingnotes'); Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--enable-startup"; Tasks: startup; Flags: runhidden waituntilterminated
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch Whispdows"; Flags: nowait postinstall skipifsilent
 

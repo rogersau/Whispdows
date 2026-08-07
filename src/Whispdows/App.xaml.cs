@@ -10,6 +10,7 @@ public partial class App : System.Windows.Application
     private readonly SettingsLoader _settingsLoader;
     private readonly SecureSecretsStore _secretsStore;
     private readonly StartupRegistration _startupRegistration;
+    private readonly SemaphoreSlim _meetingToggleGate = new(1, 1);
     private AppSettings _settings = AppSettings.CreateDefault();
     private ProviderSecrets _secrets = ProviderSecrets.Empty;
     private IAppLogger _logger = NullAppLogger.Instance;
@@ -18,7 +19,9 @@ public partial class App : System.Windows.Application
     private PillWindow? _pillWindow;
     private SettingsWindow? _settingsWindow;
     private DictationController? _controller;
+    private MeetingNotesController? _meetingController;
     private HotkeyHook? _hotkeyHook;
+    private bool _dictationPausedForMeeting;
 
     public App()
     {
@@ -34,6 +37,22 @@ public partial class App : System.Windows.Application
         _logger = CreateLogger();
         _windowsMlRuntime = new WindowsMlRuntime(
             Path.Combine(_paths.SettingsDirectory, "windowsml"));
+
+        if (FeatureConfiguration.TryParse(e.Args, out var featureSelection))
+        {
+            try
+            {
+                FeatureConfiguration.Apply(_settingsLoader, featureSelection);
+                Shutdown(0);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogException("feature-install", exception);
+                Shutdown(1);
+            }
+
+            return;
+        }
 
         if (StartupConfiguration.IsEnableCommand(e.Args))
         {
@@ -71,16 +90,20 @@ public partial class App : System.Windows.Application
             _hotkeyHook = new HotkeyHook(Dispatcher, HandleHotkeyEvent);
             _trayMenu = new TrayMenu(
                 enabled: false,
+                dictationAvailable: _settings.Features.Transcribe,
+                meetingNotesAvailable: _settings.Features.MeetingNotes,
                 launchAtLogin: _startupRegistration.IsEnabled,
                 onEnabledChanged: SetEnabled,
                 onLaunchAtLoginChanged: SetLaunchAtLogin,
+                onMeetingRecordingRequested: ToggleMeetingRecording,
                 onOpenSettingsEditorRequested: OpenSettingsEditor,
                 onReloadRequested: ReloadSettings,
                 onOpenSettingsRequested: OpenSettingsFolder,
+                onOpenMeetingNotesRequested: OpenMeetingNotesFolder,
                 onOpenReadmeRequested: OpenReadme,
                 onExitRequested: Shutdown);
 
-            if (_settings.Enabled)
+            if (_settings.Features.Transcribe && _settings.Enabled)
             {
                 TryEnableAtStartup();
             }
@@ -99,6 +122,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        DisposeMeetingController();
         _hotkeyHook?.Dispose();
         if (_controller is not null)
         {
@@ -142,7 +166,10 @@ public partial class App : System.Windows.Application
 
     private async void SetEnabled(bool enabled)
     {
-        if (_controller is null || _hotkeyHook is null || enabled == _settings.Enabled)
+        if (_controller is null
+            || _hotkeyHook is null
+            || !_settings.Features.Transcribe
+            || enabled == _settings.Enabled)
         {
             return;
         }
@@ -250,6 +277,11 @@ public partial class App : System.Windows.Application
             return "The dictation runtime is not initialized.";
         }
 
+        if (_meetingController is { State: not (MeetingNotesState.Idle or MeetingNotesState.Error) })
+        {
+            return "Stop the active meeting recording before applying settings.";
+        }
+
         var previousSettings = _settings;
         var previousSecrets = _secrets;
         var previousRegistration = _startupRegistration.IsEnabled;
@@ -269,7 +301,7 @@ public partial class App : System.Windows.Application
             candidatePipeline = null;
             pipelineReplaced = true;
 
-            if (loaded.Enabled)
+            if (loaded.Features.Transcribe && loaded.Enabled)
             {
                 EnableRuntime(loaded);
             }
@@ -280,7 +312,11 @@ public partial class App : System.Windows.Application
             settingsPersisted = true;
             _settings = loaded;
             _secrets = loadedSecrets;
-            _trayMenu?.ApplySettings(_settings.Enabled, _startupRegistration.IsEnabled);
+            _trayMenu?.ApplySettings(
+                _settings.Enabled,
+                _startupRegistration.IsEnabled,
+                _settings.Features.Transcribe,
+                _settings.Features.MeetingNotes);
             _trayMenu?.ShowInfo(successMessage);
             return null;
         }
@@ -326,7 +362,9 @@ public partial class App : System.Windows.Application
                     rollbackPipeline = null;
                 }
 
-                await ApplyRuntimeEnabledAsync(previousSettings.Enabled, previousSettings);
+                await ApplyRuntimeEnabledAsync(
+                    previousSettings.Features.Transcribe && previousSettings.Enabled,
+                    previousSettings);
             }
             catch (Exception rollbackFailure)
             {
@@ -347,14 +385,22 @@ public partial class App : System.Windows.Application
             _secrets = previousSecrets;
             if (rollbackException is null)
             {
-                _trayMenu?.ApplySettings(previousSettings.Enabled, previousRegistration);
+                _trayMenu?.ApplySettings(
+                    previousSettings.Enabled,
+                    previousRegistration,
+                    previousSettings.Features.Transcribe,
+                    previousSettings.Features.MeetingNotes);
                 var message = $"Settings were not applied: {exception.Message}";
                 _trayMenu?.ShowError(message);
                 return message;
             }
 
             _settings.Enabled = false;
-            _trayMenu?.ApplySettings(false, _startupRegistration.IsEnabled);
+            _trayMenu?.ApplySettings(
+                false,
+                _startupRegistration.IsEnabled,
+                previousSettings.Features.Transcribe,
+                previousSettings.Features.MeetingNotes);
             var rollbackMessage =
                 "Settings apply and rollback failed. Dictation remains disabled. " +
                 $"{exception.Message} ({rollbackException.GetType().Name})";
@@ -373,6 +419,12 @@ public partial class App : System.Windows.Application
         if (_controller is null || _hotkeyHook is null)
         {
             throw new InvalidOperationException("The dictation runtime is not initialized.");
+        }
+
+        if (!settings.Features.Transcribe)
+        {
+            throw new InvalidOperationException(
+                "Dictation was not selected during installation.");
         }
 
         var shortcut = HotkeyParser.Parse(settings.Hotkey.Shortcut);
@@ -436,6 +488,172 @@ public partial class App : System.Windows.Application
     private void ControllerOnError(string message)
     {
         _trayMenu?.ShowError(message);
+    }
+
+    private void ToggleMeetingRecording()
+    {
+        _ = ToggleMeetingRecordingSafelyAsync();
+    }
+
+    private async Task ToggleMeetingRecordingSafelyAsync()
+    {
+        if (!await _meetingToggleGate.WaitAsync(0))
+        {
+            return;
+        }
+
+        try
+        {
+            if (_meetingController?.State == MeetingNotesState.Recording)
+            {
+                await StopMeetingRecordingAsync();
+                return;
+            }
+
+            if (_meetingController is not null)
+            {
+                return;
+            }
+
+            await StartMeetingRecordingAsync();
+        }
+        catch (Exception exception)
+        {
+            _logger.LogException("meeting-toggle", exception);
+            _trayMenu?.SetMeetingState(MeetingNotesState.Error);
+            _trayMenu?.ShowError($"Meeting recording failed: {exception.Message}");
+        }
+        finally
+        {
+            _meetingToggleGate.Release();
+        }
+    }
+
+    private async Task StartMeetingRecordingAsync()
+    {
+        if (!_settings.Features.MeetingNotes)
+        {
+            throw new InvalidOperationException(
+                "Meeting Notes was not selected during installation.");
+        }
+
+        if (_controller?.State is not (DictationState.Idle or DictationState.Disabled))
+        {
+            throw new InvalidOperationException(
+                "Wait for the current dictation to finish before recording a meeting.");
+        }
+
+        _dictationPausedForMeeting =
+            _settings.Features.Transcribe && _settings.Enabled;
+        if (_dictationPausedForMeeting)
+        {
+            await ApplyRuntimeEnabledAsync(false, _settings);
+        }
+
+        try
+        {
+            _meetingController = CreateMeetingController(_settings, _secrets);
+            _meetingController.StateChanged += MeetingControllerOnStateChanged;
+            _meetingController.Completed += MeetingControllerOnCompleted;
+            _meetingController.ErrorOccurred += MeetingControllerOnError;
+            _meetingController.Start();
+            _trayMenu?.ShowInfo(
+                "Meeting recording started (system audio + microphone)");
+        }
+        catch
+        {
+            DisposeMeetingController();
+            await RestoreDictationAfterMeetingAsync();
+            throw;
+        }
+    }
+
+    private async Task StopMeetingRecordingAsync()
+    {
+        var controller = _meetingController
+            ?? throw new InvalidOperationException(
+                "Meeting audio capture is not active.");
+        try
+        {
+            await controller.StopAsync();
+        }
+        finally
+        {
+            DisposeMeetingController();
+            await RestoreDictationAfterMeetingAsync();
+        }
+    }
+
+    private async Task RestoreDictationAfterMeetingAsync()
+    {
+        var shouldRestore = _dictationPausedForMeeting;
+        _dictationPausedForMeeting = false;
+        if (shouldRestore && _settings.Features.Transcribe && _settings.Enabled)
+        {
+            try
+            {
+                await ApplyRuntimeEnabledAsync(true, _settings);
+                _trayMenu?.SetEnabled(true);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogException("meeting-dictation-restore", exception);
+                _trayMenu?.SetEnabled(false);
+                _trayMenu?.ShowError(
+                    $"Meeting finished, but dictation could not restart: {exception.Message}");
+            }
+        }
+    }
+
+    private void MeetingControllerOnStateChanged(MeetingNotesState state)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(
+                () => MeetingControllerOnStateChanged(state));
+            return;
+        }
+
+        _trayMenu?.SetMeetingState(state);
+    }
+
+    private void MeetingControllerOnCompleted(MeetingNotesArchiveResult result)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(
+                () => MeetingControllerOnCompleted(result));
+            return;
+        }
+
+        _trayMenu?.ShowInfo($"Meeting notes saved to {result.MarkdownPath}");
+    }
+
+    private void MeetingControllerOnError(string message)
+    {
+        if (!Dispatcher.CheckAccess())
+        {
+            _ = Dispatcher.BeginInvoke(
+                () => MeetingControllerOnError(message));
+            return;
+        }
+
+        _trayMenu?.ShowError(message);
+    }
+
+    private void DisposeMeetingController()
+    {
+        var controller = _meetingController;
+        _meetingController = null;
+        if (controller is null)
+        {
+            return;
+        }
+
+        controller.StateChanged -= MeetingControllerOnStateChanged;
+        controller.Completed -= MeetingControllerOnCompleted;
+        controller.ErrorOccurred -= MeetingControllerOnError;
+        controller.Dispose();
     }
 
     private DictationPipeline CreatePipeline(
@@ -543,6 +761,142 @@ public partial class App : System.Windows.Application
         catch
         {
             cloud.Dispose();
+            throw;
+        }
+    }
+
+    private MeetingNotesController CreateMeetingController(
+        AppSettings settings,
+        ProviderSecrets secrets)
+    {
+        var transcriber = CreateMeetingTranscriber(
+            settings.MeetingNotes,
+            secrets);
+        try
+        {
+            var notesGenerator = CreateMeetingNotesGenerator(
+                settings.MeetingNotes,
+                secrets);
+            try
+            {
+                return new MeetingNotesController(
+                    new MeetingAudioRecorder(),
+                    new AudioSettings
+                    {
+                        DeviceId = settings.Audio.DeviceId,
+                        MaxSeconds = settings.Audio.MaxSeconds
+                    },
+                    transcriber,
+                    notesGenerator,
+                    new MeetingNotesArchive(
+                        settings.MeetingNotes.OutputDirectory),
+                    _logger);
+            }
+            catch
+            {
+                notesGenerator.Dispose();
+                throw;
+            }
+        }
+        catch
+        {
+            transcriber.Dispose();
+            throw;
+        }
+    }
+
+    private ITranscriber CreateMeetingTranscriber(
+        MeetingNotesSettings settings,
+        ProviderSecrets secrets)
+    {
+        var providerName = settings.TranscriptionProvider.ToLowerInvariant();
+        if (providerName == "auto")
+        {
+            providerName = secrets.Has("OPENAI_API_KEY")
+                ? "openai"
+                : secrets.Has("GROQ_API_KEY")
+                    ? "groq"
+                    : "local";
+        }
+
+        if (providerName == "local")
+        {
+            return CreateLocalMeetingTranscriber(settings);
+        }
+
+        var cloud = new OpenAiCompatibleTranscriber(
+            CloudProviderDefinition.Create(providerName, secrets),
+            providerName == "openai"
+                ? settings.OpenaiTranscriptionModel
+                : settings.GroqTranscriptionModel,
+            settings.Language,
+            timeout: TimeSpan.FromMinutes(3));
+        ITranscriber chunked = new ChunkingTranscriber(
+            cloud,
+            TimeSpan.FromMinutes(10));
+
+        var localModelPath = ResolveApplicationPath(settings.LocalModelPath);
+        if (!File.Exists(localModelPath))
+        {
+            return chunked;
+        }
+
+        try
+        {
+            return new FallbackTranscriber(
+                chunked,
+                CreateLocalMeetingTranscriber(settings));
+        }
+        catch
+        {
+            chunked.Dispose();
+            throw;
+        }
+    }
+
+    private ITranscriber CreateLocalMeetingTranscriber(
+        MeetingNotesSettings settings)
+    {
+        return new WhisperCppTranscriber(
+            ResolveApplicationPath(settings.LocalModelPath),
+            settings.Language,
+            settings.LocalThreads);
+    }
+
+    private IMeetingNotesGenerator CreateMeetingNotesGenerator(
+        MeetingNotesSettings settings,
+        ProviderSecrets secrets)
+    {
+        var providerName = settings.NotesProvider.ToLowerInvariant();
+        if (providerName == "auto")
+        {
+            providerName = secrets.Has("OPENAI_API_KEY")
+                ? "openai"
+                : secrets.Has("GROQ_API_KEY")
+                    ? "groq"
+                    : "ollama";
+        }
+
+        var local = new OllamaMeetingNotesGenerator(
+            settings.OllamaEndpoint,
+            settings.OllamaModel);
+        if (providerName == "ollama")
+        {
+            return local;
+        }
+
+        try
+        {
+            var cloud = new OpenAiCompatibleMeetingNotesGenerator(
+                CloudProviderDefinition.Create(providerName, secrets),
+                providerName == "openai"
+                    ? settings.OpenaiNotesModel
+                    : settings.GroqNotesModel);
+            return new FallbackMeetingNotesGenerator(cloud, local);
+        }
+        catch
+        {
+            local.Dispose();
             throw;
         }
     }
@@ -787,6 +1141,23 @@ public partial class App : System.Windows.Application
         {
             _logger.LogException("open-settings", exception);
             _trayMenu?.ShowError($"Could not open settings folder: {exception.Message}");
+        }
+    }
+
+    private void OpenMeetingNotesFolder()
+    {
+        try
+        {
+            var directory = MeetingNotesArchive.ResolveOutputDirectory(
+                _settings.MeetingNotes.OutputDirectory);
+            Directory.CreateDirectory(directory);
+            OpenPath(directory);
+        }
+        catch (Exception exception)
+        {
+            _logger.LogException("open-meeting-notes", exception);
+            _trayMenu?.ShowError(
+                $"Could not open the MeetingNotes folder: {exception.Message}");
         }
     }
 

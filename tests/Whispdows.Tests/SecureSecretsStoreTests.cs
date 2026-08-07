@@ -50,6 +50,31 @@ public sealed class SecureSecretsStoreTests
         Assert.Contains("migrated", legacyContents, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void New_non_empty_env_values_are_imported_into_an_existing_store()
+    {
+        using var sandbox = new SecretsSandbox();
+        var store = new SecureSecretsStore(
+            sandbox.SecurePath,
+            sandbox.LegacyPath);
+        store.Save(new ProviderSecrets(new Dictionary<string, string>
+        {
+            ["GROQ_API_KEY"] = "existing-groq"
+        }));
+        Directory.CreateDirectory(Path.GetDirectoryName(sandbox.LegacyPath)!);
+        File.WriteAllText(
+            sandbox.LegacyPath,
+            "OPENAI_API_KEY=new-openai\nGROQ_API_KEY=\n");
+
+        var loaded = store.LoadOrCreate();
+
+        Assert.Equal("new-openai", loaded.Get("OPENAI_API_KEY"));
+        Assert.Equal("existing-groq", loaded.Get("GROQ_API_KEY"));
+        Assert.DoesNotContain(
+            "new-openai",
+            File.ReadAllText(sandbox.LegacyPath));
+    }
+
     private sealed class SecretsSandbox : IDisposable
     {
         private readonly string _root = Path.Combine(

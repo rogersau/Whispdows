@@ -45,6 +45,8 @@ public sealed class AppSettings
 {
     public bool Enabled { get; set; } = true;
 
+    public FeatureSettings Features { get; set; } = new();
+
     public HotkeySettings Hotkey { get; set; } = new();
 
     public AudioSettings Audio { get; set; } = new();
@@ -54,6 +56,8 @@ public sealed class AppSettings
     public CleanupSettings Cleanup { get; set; } = new();
 
     public PasteSettings Paste { get; set; } = new();
+
+    public MeetingNotesSettings MeetingNotes { get; set; } = new();
 
     public bool LaunchAtLogin { get; set; }
 
@@ -69,6 +73,11 @@ internal static class SettingsSnapshot
         return new AppSettings
         {
             Enabled = source.Enabled,
+            Features = new FeatureSettings
+            {
+                Transcribe = source.Features.Transcribe,
+                MeetingNotes = source.Features.MeetingNotes
+            },
             Hotkey = new HotkeySettings
             {
                 Shortcut = source.Hotkey.Shortcut,
@@ -113,9 +122,31 @@ internal static class SettingsSnapshot
                 RestoreClipboard = source.Paste.RestoreClipboard,
                 RestoreDelayMs = source.Paste.RestoreDelayMs
             },
+            MeetingNotes = new MeetingNotesSettings
+            {
+                OutputDirectory = source.MeetingNotes.OutputDirectory,
+                TranscriptionProvider = source.MeetingNotes.TranscriptionProvider,
+                Language = source.MeetingNotes.Language,
+                LocalModelPath = source.MeetingNotes.LocalModelPath,
+                LocalThreads = source.MeetingNotes.LocalThreads,
+                OpenaiTranscriptionModel = source.MeetingNotes.OpenaiTranscriptionModel,
+                GroqTranscriptionModel = source.MeetingNotes.GroqTranscriptionModel,
+                NotesProvider = source.MeetingNotes.NotesProvider,
+                OpenaiNotesModel = source.MeetingNotes.OpenaiNotesModel,
+                GroqNotesModel = source.MeetingNotes.GroqNotesModel,
+                OllamaEndpoint = source.MeetingNotes.OllamaEndpoint,
+                OllamaModel = source.MeetingNotes.OllamaModel
+            },
             LaunchAtLogin = source.LaunchAtLogin
         };
     }
+}
+
+public sealed class FeatureSettings
+{
+    public bool Transcribe { get; set; } = true;
+
+    public bool MeetingNotes { get; set; } = true;
 }
 
 public sealed class HotkeySettings
@@ -189,6 +220,33 @@ public sealed class PasteSettings
     public bool RestoreClipboard { get; set; } = true;
 
     public int RestoreDelayMs { get; set; } = 175;
+}
+
+public sealed class MeetingNotesSettings
+{
+    public string OutputDirectory { get; set; } = "~/MeetingNotes";
+
+    public string TranscriptionProvider { get; set; } = "auto";
+
+    public string Language { get; set; } = "en";
+
+    public string LocalModelPath { get; set; } = "models/ggml-medium.en.bin";
+
+    public int LocalThreads { get; set; }
+
+    public string OpenaiTranscriptionModel { get; set; } = "gpt-4o-transcribe";
+
+    public string GroqTranscriptionModel { get; set; } = "whisper-large-v3-turbo";
+
+    public string NotesProvider { get; set; } = "auto";
+
+    public string OpenaiNotesModel { get; set; } = "gpt-4.1-mini";
+
+    public string GroqNotesModel { get; set; } = "openai/gpt-oss-120b";
+
+    public string OllamaEndpoint { get; set; } = "http://127.0.0.1:11434";
+
+    public string OllamaModel { get; set; } = "llama3.2:3b";
 }
 
 public sealed class SettingsLoader
@@ -293,6 +351,16 @@ public static class SettingsValidator
         "auto", "sentence", "fragment"
     };
 
+    private static readonly HashSet<string> MeetingTranscriptionProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "auto", "local", "openai", "groq"
+    };
+
+    private static readonly HashSet<string> MeetingNotesProviders = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "auto", "openai", "groq", "ollama"
+    };
+
     public static IReadOnlyList<string> Validate(AppSettings? settings)
     {
         var errors = new List<string>();
@@ -310,6 +378,15 @@ public static class SettingsValidator
         else if (!HotkeyParser.TryParse(settings.Hotkey.Shortcut, out _, out var hotkeyError))
         {
             errors.Add(hotkeyError!);
+        }
+
+        if (settings.Features is null)
+        {
+            errors.Add("features must be an object.");
+        }
+        else if (!settings.Features.Transcribe && !settings.Features.MeetingNotes)
+        {
+            errors.Add("At least one of features.transcribe or features.meetingNotes must be enabled.");
         }
 
         if (settings.Audio is null)
@@ -477,6 +554,75 @@ public static class SettingsValidator
             errors.Add("paste.restoreDelayMs must be between 0 and 5000.");
         }
 
+        if (settings.MeetingNotes is null)
+        {
+            errors.Add("meetingNotes must be an object.");
+        }
+        else
+        {
+            AddAllowedValueError(
+                errors,
+                "meetingNotes.transcriptionProvider",
+                settings.MeetingNotes.TranscriptionProvider,
+                MeetingTranscriptionProviders);
+            AddAllowedValueError(
+                errors,
+                "meetingNotes.notesProvider",
+                settings.MeetingNotes.NotesProvider,
+                MeetingNotesProviders);
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.OutputDirectory))
+            {
+                errors.Add("meetingNotes.outputDirectory must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.Language))
+            {
+                errors.Add("meetingNotes.language must not be empty.");
+            }
+
+            if (settings.MeetingNotes.LocalThreads < 0)
+            {
+                errors.Add("meetingNotes.localThreads cannot be negative.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.LocalModelPath))
+            {
+                errors.Add("meetingNotes.localModelPath must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.OpenaiTranscriptionModel))
+            {
+                errors.Add("meetingNotes.openaiTranscriptionModel must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.GroqTranscriptionModel))
+            {
+                errors.Add("meetingNotes.groqTranscriptionModel must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.OpenaiNotesModel))
+            {
+                errors.Add("meetingNotes.openaiNotesModel must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.GroqNotesModel))
+            {
+                errors.Add("meetingNotes.groqNotesModel must not be empty.");
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.MeetingNotes.OllamaModel))
+            {
+                errors.Add("meetingNotes.ollamaModel must not be empty.");
+            }
+
+            if (!IsLoopbackHttpEndpoint(settings.MeetingNotes.OllamaEndpoint))
+            {
+                errors.Add(
+                    "meetingNotes.ollamaEndpoint must be an HTTP or HTTPS loopback endpoint.");
+            }
+        }
+
         return errors;
     }
 
@@ -499,6 +645,16 @@ public static class SettingsValidator
         {
             errors.Add($"{propertyName} must be one of: {string.Join(", ", allowedValues.Order())}.");
         }
+    }
+
+    private static bool IsLoopbackHttpEndpoint(string? endpoint)
+    {
+        return Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            && uri.IsLoopback
+            && string.IsNullOrEmpty(uri.UserInfo)
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment);
     }
 
     private static void AddOnlineTranscriptionModelErrors(

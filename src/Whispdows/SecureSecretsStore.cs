@@ -33,17 +33,30 @@ public sealed class SecureSecretsStore
             ?? throw new SecureSecretsException("The secure secrets path has no parent directory.");
         Directory.CreateDirectory(directory);
 
-        ProviderSecrets secrets;
-        if (File.Exists(_path))
-        {
-            secrets = LoadEncrypted();
-        }
-        else if (File.Exists(_legacyPath))
+        var secureStoreExists = File.Exists(_path);
+        var secrets = secureStoreExists
+            ? LoadEncrypted()
+            : ProviderSecrets.Empty;
+        var shouldSave = !secureStoreExists;
+
+        if (File.Exists(_legacyPath))
         {
             try
             {
-                secrets = EnvironmentFileLoader.Parse(File.ReadAllText(_legacyPath));
-                Save(secrets);
+                var imported = EnvironmentFileLoader.Parse(
+                    File.ReadAllText(_legacyPath));
+                var nonEmptyValues = imported
+                    .CopyValues()
+                    .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => (string?)pair.Value,
+                        StringComparer.Ordinal);
+                if (nonEmptyValues.Count > 0)
+                {
+                    secrets = secrets.WithUpdates(nonEmptyValues);
+                    shouldSave = true;
+                }
             }
             catch (EnvironmentFileException exception)
             {
@@ -52,9 +65,9 @@ public sealed class SecureSecretsStore
                     exception);
             }
         }
-        else
+
+        if (shouldSave)
         {
-            secrets = ProviderSecrets.Empty;
             Save(secrets);
         }
 

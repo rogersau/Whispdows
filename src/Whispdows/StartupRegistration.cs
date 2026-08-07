@@ -95,3 +95,64 @@ public static class StartupConfiguration
         startupRegistration.SetEnabled(true);
     }
 }
+
+public enum FeatureSelection
+{
+    Transcribe,
+    MeetingNotes,
+    Both
+}
+
+public static class FeatureConfiguration
+{
+    private const string CommandPrefix = "--configure-features=";
+
+    public static bool TryParse(
+        IReadOnlyList<string> arguments,
+        out FeatureSelection selection)
+    {
+        selection = default;
+        if (arguments.Count != 1
+            || !arguments[0].StartsWith(
+                CommandPrefix,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var value = arguments[0][CommandPrefix.Length..];
+        if (string.Equals(value, "transcribe", StringComparison.OrdinalIgnoreCase))
+        {
+            selection = FeatureSelection.Transcribe;
+            return true;
+        }
+
+        if (string.Equals(value, "meeting-notes", StringComparison.OrdinalIgnoreCase))
+        {
+            selection = FeatureSelection.MeetingNotes;
+            return true;
+        }
+
+        if (string.Equals(value, "both", StringComparison.OrdinalIgnoreCase))
+        {
+            selection = FeatureSelection.Both;
+            return true;
+        }
+
+        return false;
+    }
+
+    public static void Apply(
+        SettingsLoader settingsLoader,
+        FeatureSelection selection)
+    {
+        ArgumentNullException.ThrowIfNull(settingsLoader);
+
+        var settings = settingsLoader.LoadOrCreate();
+        settings.Features.Transcribe =
+            selection is FeatureSelection.Transcribe or FeatureSelection.Both;
+        settings.Features.MeetingNotes =
+            selection is FeatureSelection.MeetingNotes or FeatureSelection.Both;
+        settingsLoader.Save(settings);
+    }
+}
